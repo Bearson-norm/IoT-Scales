@@ -4,14 +4,14 @@ import MasterProduct from './database/MasterProduct'
 import MasterFormulation from './database/MasterFormulation'
 import MasterToleranceGrouping from './database/MasterToleranceGrouping'
 import MasterUser from './database/MasterUser'
-import apiService from '../../services/api.js'
+import apiService from '../services/api.js'
 
 const Database = () => {
   const [activeTab, setActiveTab] = useState('product')
   const [stats, setStats] = useState({
     totalProducts: 0,
     totalFormulations: 0,
-    activeUsers: 0
+    totalToleranceGroupings: 0
   })
 
   // Load stats on component mount
@@ -29,14 +29,14 @@ const Database = () => {
       const formulationsResponse = await apiService.getFormulations()
       const totalFormulations = formulationsResponse.success ? formulationsResponse.data.length : 0
 
-      // Load users count (assuming active users)
-      const usersResponse = await apiService.getUsers()
-      const activeUsers = usersResponse.success ? usersResponse.data.filter(user => user.status === 'active').length : 0
+      // Load tolerance groupings count (as alternative to users)
+      const toleranceResponse = await apiService.getToleranceGroupings()
+      const totalToleranceGroupings = toleranceResponse.success ? toleranceResponse.data.length : 0
 
       setStats({
         totalProducts,
         totalFormulations,
-        activeUsers
+        totalToleranceGroupings
       })
     } catch (error) {
       console.error('Error loading stats:', error)
@@ -123,8 +123,8 @@ const Database = () => {
                 <span className="stat-value">{stats.totalFormulations}</span>
               </div>
               <div className="stat-item">
-                <span className="stat-label">Active Users:</span>
-                <span className="stat-value">{stats.activeUsers}</span>
+                <span className="stat-label">Tolerance Groupings:</span>
+                <span className="stat-value">{stats.totalToleranceGroupings}</span>
               </div>
             </div>
           </div>
