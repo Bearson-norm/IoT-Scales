@@ -849,12 +849,12 @@ const MasterFormulation = () => {
                       <tbody>
                         {selectedFormulation.ingredients.map((ingredient, index) => (
                           <tr key={index}>
-                            <td className="ingredient-name">{ingredient.ingredient_name}</td>
-                            <td className="ingredient-code">{ingredient.ingredient_code}</td>
-                            <td className="ingredient-category">{ingredient.category}</td>
-                            <td className="ingredient-tolerance">{ingredient.type_tolerance}</td>
-                            <td className="ingredient-grouping">{ingredient.tolerance_grouping_name}</td>
-                            <td className="ingredient-mass">{ingredient.target_mass ? ingredient.target_mass.toFixed(1) : '0.0'}</td>
+                            <td className="ingredient-name">{ingredient.ingredient_name || ingredient.product_name || 'N/A'}</td>
+                            <td className="ingredient-code">{ingredient.ingredient_code || ingredient.product_code || 'N/A'}</td>
+                            <td className="ingredient-category">{ingredient.category || ingredient.product_category || 'N/A'}</td>
+                            <td className="ingredient-tolerance">{ingredient.type_tolerance || 'N/A'}</td>
+                            <td className="ingredient-grouping">{ingredient.tolerance_grouping_name || ingredient.tolerance_grouping || 'N/A'}</td>
+                            <td className="ingredient-mass">{ingredient.target_mass ? Number(ingredient.target_mass).toFixed(1) : '0.0'}</td>
                           </tr>
                         ))}
                       </tbody>

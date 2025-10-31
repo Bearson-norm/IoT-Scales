@@ -1,7 +1,7 @@
 import React from 'react'
-import { Home, List, Settings, History, AlertTriangle, QrCode, Database, Upload } from 'lucide-react'
+import { Home, List, Settings, History, AlertTriangle, QrCode, Database, Upload, Package } from 'lucide-react'
 
-const LeftPanel = ({ workOrder, recipe, onIngredientClick, onStartScan, currentPage, onPageChange }) => {
+const LeftPanel = ({ workOrder, recipe, onIngredientClick, onStartScan, onStartMOScan, currentPage, onPageChange }) => {
   const getStatusCounts = () => {
     if (!recipe.length) return { completed: 0, pending: 0, empty: 0, total: 0 }
     
@@ -64,6 +64,17 @@ const LeftPanel = ({ workOrder, recipe, onIngredientClick, onStartScan, currentP
           title="History"
         >
           <History size={20} />
+        </button>
+      </div>
+      <div className="leftpanel-action">
+        <button
+          className="btn btn-primary btn-scan-mo"
+          onClick={onStartMOScan}
+          title="Scan MO"
+          style={{ marginTop: '8px', width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6 }}
+        >
+          <Package size={16} />
+          Scan MO
         </button>
       </div>
     </div>

@@ -10,7 +10,13 @@
     "server": "node server.js",
     "start": "npm run build && npm run server",
     "start-server": "start-server.bat",
-    "stop-server": "stop-server.bat"
+    "stop-server": "stop-server.bat",
+    "docker:build": "docker-compose build",
+    "docker:up": "docker-compose up -d",
+    "docker:down": "docker-compose down",
+    "docker:logs": "docker-compose logs -f",
+    "docker:restart": "docker-compose restart",
+    "docker:clean": "docker-compose down -v --remove-orphans && docker system prune -f"
   },
   "dependencies": {
     "@zxing/library": "^0.21.3",
@@ -24,7 +30,9 @@
     "quagga": "^0.12.1",
     "react": "^18.2.0",
     "react-dom": "^18.2.0",
-    "react-router-dom": "^6.8.1"
+    "react-router-dom": "^6.8.1",
+    "serialport": "^12.0.0",
+    "ws": "^8.18.0"
   },
   "devDependencies": {
     "@types/react": "^18.0.28",

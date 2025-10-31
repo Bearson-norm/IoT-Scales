@@ -1,7 +1,7 @@
 import React from 'react'
-import { QrCode } from 'lucide-react'
+import { QrCode, Package } from 'lucide-react'
 
-const RecipePanel = ({ workOrder, recipe, onIngredientClick, onStartScan }) => {
+const RecipePanel = ({ workOrder, recipe, onIngredientClick, onStartScan, onStartMOScan, isWeighingActive }) => {
   const getStatusCounts = () => {
     if (!recipe.length) return { completed: 0, pending: 0, empty: 0, total: 0 }
     
@@ -52,31 +52,39 @@ const RecipePanel = ({ workOrder, recipe, onIngredientClick, onStartScan }) => {
         
         {!workOrder ? (
           <div className="empty-state">
-            <QrCode size={64} className="empty-icon" />
+            <Package size={64} className="empty-icon" />
             <div className="empty-text">Scan Work Order</div>
-            <div className="empty-subtext">Scan barcode MO untuk memulai proses</div>
+            <div className="empty-subtext">Mulai proses penimbangan dengan scan MO</div>
             <button 
               className="btn btn-primary"
-              onClick={() => onStartScan('mo')}
+              onClick={onStartMOScan}
               style={{ marginTop: '20px' }}
             >
-              <QrCode size={20} />
+              <Package size={20} />
               Scan MO
             </button>
           </div>
         ) : !recipe.length ? (
           <div className="empty-state">
-            <QrCode size={64} className="empty-icon" />
-            <div className="empty-text">Scan SKU</div>
-            <div className="empty-subtext">Scan barcode SKU untuk mendapatkan resep</div>
-            <button 
-              className="btn btn-primary"
-              onClick={() => onStartScan('sku')}
-              style={{ marginTop: '20px' }}
-            >
-              <QrCode size={20} />
-              Scan SKU
-            </button>
+            <Package size={64} className="empty-icon" />
+            <div className="empty-text">Belum ada resep</div>
+            <div className="empty-subtext">Scan MO untuk pilih formulasi atau scan SKU</div>
+            <div style={{ display: 'flex', gap: 12, marginTop: 20 }}>
+              <button 
+                className="btn btn-primary"
+                onClick={onStartMOScan}
+              >
+                <Package size={20} />
+                Scan MO
+              </button>
+              <button 
+                className="btn"
+                onClick={() => onStartScan('sku')}
+              >
+                <QrCode size={20} />
+                Scan SKU
+              </button>
+            </div>
           </div>
         ) : (
           recipe.map((ingredient, index) => {
@@ -95,7 +103,7 @@ const RecipePanel = ({ workOrder, recipe, onIngredientClick, onStartScan }) => {
                   </div>
                   <div>
                     <div className="ingredient-name">{ingredient.name}</div>
-                    <div className="ingredient-id">ID: {ingredient.id}</div>
+                    <div className="ingredient-id">Code: {ingredient.code || '-'}</div>
                   </div>
                 </div>
                 

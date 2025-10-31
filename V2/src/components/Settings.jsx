@@ -1,4 +1,4 @@
-import React, { useState } from 'react'
+import React, { useState, useEffect } from 'react'
 import { Settings as SettingsIcon, Save, RotateCcw, Scale, Database, User, Bell, Shield, Server } from 'lucide-react'
 import ServerDatabaseConfig from './ServerDatabaseConfig'
 
@@ -11,11 +11,15 @@ const Settings = () => {
     language: 'id',
     timezone: 'Asia/Jakarta',
     
-    // Scale Settings
+    // Scale Settings (Vibra)
     scalePort: 'COM1',
     scaleBaudRate: 9600,
-    scaleTimeout: 5000,
-    weightUnit: 'g',
+    scaleDataBits: 8,
+    scaleParity: 'none',
+    scaleStopBits: 2,
+    scaleTimeout: 3000,
+    scaleModel: 'vibra',
+    weightUnit: 'kg',
     autoTare: true,
     weightTolerance: 0.1,
     
@@ -42,6 +46,22 @@ const Settings = () => {
   const [isSaving, setIsSaving] = useState(false)
   const [saveMessage, setSaveMessage] = useState('')
 
+  useEffect(() => {
+    // Load scale config from server
+    fetch('/api/scale/config')
+      .then(r => r.json())
+      .then(data => {
+        if (data.success && data.data) {
+          setSettings(prev => ({
+            ...prev,
+            scalePort: data.data.port || prev.scalePort,
+            scaleModel: data.data.model || prev.scaleModel
+          }))
+        }
+      })
+      .catch(e => console.error('Failed to load scale config:', e))
+  }, [])
+
   const handleSettingChange = (category, key, value) => {
     setSettings(prev => ({
       ...prev,
@@ -54,11 +74,27 @@ const Settings = () => {
     setSaveMessage('')
     
     // Simulate save delay
-    setTimeout(() => {
-      setIsSaving(false)
+    try {
+      // Save scale config if on scale tab
+      if (activeTab === 'scale') {
+        await fetch('/api/scale/config', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            enabled: true,
+            model: settings.scaleModel,
+            port: settings.scalePort
+          })
+        })
+      }
       setSaveMessage('Pengaturan berhasil disimpan!')
+    } catch (e) {
+      setSaveMessage('Gagal menyimpan pengaturan')
+      console.error('Save error:', e)
+    } finally {
+      setIsSaving(false)
       setTimeout(() => setSaveMessage(''), 3000)
-    }, 1500)
+    }
   }
 
   const handleReset = () => {
@@ -71,8 +107,12 @@ const Settings = () => {
         timezone: 'Asia/Jakarta',
         scalePort: 'COM1',
         scaleBaudRate: 9600,
-        scaleTimeout: 5000,
-        weightUnit: 'g',
+        scaleDataBits: 8,
+        scaleParity: 'none',
+        scaleStopBits: 2,
+        scaleTimeout: 3000,
+        scaleModel: 'vibra',
+        weightUnit: 'kg',
         autoTare: true,
         weightTolerance: 0.1,
         dbHost: 'localhost',
@@ -160,6 +200,19 @@ const Settings = () => {
       <h3>Pengaturan Timbangan</h3>
       <div className="settings-grid">
         <div className="form-group">
+          <label className="form-label">Model Timbangan</label>
+          <select
+            className="form-input"
+            value={settings.scaleModel}
+            onChange={(e) => handleSettingChange('scale', 'scaleModel', e.target.value)}
+          >
+            <option value="generic">Generic RS232</option>
+            <option value="ohaus_ranger">OHAUS Ranger</option>
+            <option value="mettler_toledo">Mettler Toledo</option>
+            <option value="and_fx">A&D FX/FG</option>
+          </select>
+        </div>
+        <div className="form-group">
           <label className="form-label">Port Serial</label>
           <select
             className="form-input"
@@ -190,6 +243,43 @@ const Settings = () => {
         </div>
         
         <div className="form-group">
+          <label className="form-label">Data Bits</label>
+          <select
+            className="form-input"
+            value={settings.scaleDataBits}
+            onChange={(e) => handleSettingChange('scale', 'scaleDataBits', parseInt(e.target.value))}
+          >
+            <option value={7}>7</option>
+            <option value={8}>8</option>
+          </select>
+        </div>
+        
+        <div className="form-group">
+          <label className="form-label">Parity</label>
+          <select
+            className="form-input"
+            value={settings.scaleParity}
+            onChange={(e) => handleSettingChange('scale', 'scaleParity', e.target.value)}
+          >
+            <option value="none">None</option>
+            <option value="even">Even</option>
+            <option value="odd">Odd</option>
+          </select>
+        </div>
+        
+        <div className="form-group">
+          <label className="form-label">Stop Bits</label>
+          <select
+            className="form-input"
+            value={settings.scaleStopBits}
+            onChange={(e) => handleSettingChange('scale', 'scaleStopBits', parseInt(e.target.value))}
+          >
+            <option value={1}>1</option>
+            <option value={2}>2</option>
+          </select>
+        </div>
+        
+        <div className="form-group">
           <label className="form-label">Timeout (ms)</label>
           <input
             type="number"
@@ -198,6 +288,7 @@ const Settings = () => {
             onChange={(e) => handleSettingChange('scale', 'scaleTimeout', parseInt(e.target.value))}
           />
         </div>
+
         
         <div className="form-group">
           <label className="form-label">Unit Berat</label>
@@ -234,6 +325,38 @@ const Settings = () => {
             Auto Tare
           </label>
         </div>
+      </div>
+      <div style={{ marginTop: 10, display: 'flex', gap: 8 }}>
+        <button className="btn btn-secondary" onClick={async () => {
+          try {
+            const resp = await fetch('/api/scale/ports');
+            const data = await resp.json();
+            if (data.success) {
+              const ports = data.data || [];
+              if (ports.length === 0) {
+                alert('Tidak ada port serial yang terdeteksi');
+              } else {
+                const portList = ports.map(p => `${p.path}${p.manufacturer ? ` (${p.manufacturer})` : ''}`).join('\n');
+                alert(`Port Serial Tersedia:\n${portList}`);
+              }
+            }
+          } catch (e) {
+            alert('Gagal mengambil daftar port')
+          }
+        }}>Daftar Port</button>
+        <button className="btn btn-secondary" onClick={async () => {
+          try {
+            const resp = await fetch('/api/scale/read');
+            const data = await resp.json();
+            if (data.success) {
+              alert(`Berat: ${data.weight.toFixed(4)} ${data.unit}\nOriginal: ${data.weightOriginal} ${data.originalUnit}\nStable: ${data.stable ? 'Ya' : 'Tidak'}\nRaw: ${data.raw?.slice(0,120)}`)
+            } else {
+              alert(`Gagal baca timbangan: ${data.error || 'Unknown'}`)
+            }
+          } catch (e) {
+            alert('Gagal tes baca timbangan')
+          }
+        }}>Tes Baca Timbangan</button>
       </div>
     </div>
   )

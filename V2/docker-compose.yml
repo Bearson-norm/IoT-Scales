@@ -1,0 +1,108 @@
+services:
+  # PostgreSQL Database
+  postgres:
+    image: postgres:15-alpine
+    container_name: iot-scales-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: FLB_MOWS
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: Admin123
+      POSTGRES_INITDB_ARGS: "--encoding=UTF-8 --lc-collate=C --lc-ctype=C"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./database/init:/docker-entrypoint-initdb.d:ro
+    ports:
+      - "5432:5432"
+    networks:
+      - iot-scales-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d FLB_MOWS"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+  # IoT Scales Application
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile.simple
+    container_name: iot-scales-app
+    restart: unless-stopped
+    environment:
+      NODE_ENV: production
+      PORT: 3001
+      DB_HOST: postgres
+      DB_PORT: 5432
+      DB_NAME: FLB_MOWS
+      DB_USER: postgres
+      DB_PASSWORD: Admin123
+      # Serial port configuration (optional - defaults to COM1)
+      SCALE_PORT: ${SCALE_PORT:-COM1}
+    ports:
+      - "3001:3001"
+    volumes:
+      - ./uploads:/app/uploads
+      - app_logs:/app/logs
+    # Serial port access configuration
+    # IMPORTANT: Uncomment ONE of the options below based on your platform
+    #
+    # Option 1: Linux - Map specific serial device (recommended)
+    # devices:
+    #   - /dev/ttyUSB0:/dev/ttyUSB0
+    #   - /dev/ttyACM0:/dev/ttyACM0
+    #
+    # Option 2: Windows WSL2 - Use COM port (requires WSL2 backend)
+    # devices:
+    #   - /dev/ttyS10:/dev/ttyS10  # For COM10, adjust number as needed
+    #
+    # Option 3: Privileged mode (less secure, but works on most platforms)
+    # privileged: true
+    #
+    # Option 4: Access all devices (most flexible, but least secure)
+    # device_cgroup_rules:
+    #   - 'c *:* rmw'
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - iot-scales-network
+    healthcheck:
+      test: ["CMD", "node", "-e", "require('http').get('http://localhost:3001/api/health', (res) => { process.exit(res.statusCode === 200 ? 0 : 1) })"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+  # Optional: pgAdmin for database management
+  pgadmin:
+    image: dpage/pgadmin4:latest
+    container_name: iot-scales-pgadmin
+    restart: unless-stopped
+    environment:
+      PGADMIN_DEFAULT_EMAIL: admin@iotscales.local
+      PGADMIN_DEFAULT_PASSWORD: admin123
+      PGADMIN_CONFIG_SERVER_MODE: 'False'
+    ports:
+      - "8080:80"
+    volumes:
+      - pgadmin_data:/var/lib/pgadmin
+    depends_on:
+      - postgres
+    networks:
+      - iot-scales-network
+    profiles:
+      - tools
+
+volumes:
+  postgres_data:
+    driver: local
+  pgadmin_data:
+    driver: local
+  app_logs:
+    driver: local
+
+networks:
+  iot-scales-network:
+    driver: bridge

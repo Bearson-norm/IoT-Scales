@@ -103,6 +103,15 @@ class ApiService {
     return this.request(`/formulations/${formulationId}/ingredients`);
   }
 
+  // History and Work Orders
+  async getProductionHistory() {
+    return this.request('/history');
+  }
+
+  async getWorkOrderByNumber(moNumber) {
+    return this.request(`/work-orders/${encodeURIComponent(moNumber)}`);
+  }
+
   async createFormulation(formulationData) {
     return this.request('/formulations', {
       method: 'POST',

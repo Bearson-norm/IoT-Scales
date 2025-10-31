@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react'
 import { History, Download, Filter, Search, Clock, CheckCircle, XCircle, AlertCircle, Server, FileText, Database } from 'lucide-react'
-import importLogger from '../utils/importLogger.js'
+import api from '../services/api'
 
 const ImportHistory = () => {
   const [importLogs, setImportLogs] = useState([])
@@ -26,19 +26,29 @@ const ImportHistory = () => {
 
   const loadImportHistory = async () => {
     try {
-      const result = await importLogger.getImportHistory(100, 0)
-      setImportLogs(result.logs)
+      const resp = await api.request('/import-logs')
+      const list = (resp && resp.data) || []
+      setImportLogs(list)
     } catch (error) {
       console.error('Error loading import history:', error)
+      setImportLogs([])
     }
   }
 
   const loadStatistics = async () => {
     try {
-      const stats = await importLogger.getImportStatistics()
+      const resp = await api.request('/import-logs')
+      const list = (resp && resp.data) || []
+      const stats = {
+        total_imports: list.length,
+        successful_imports: list.filter(l => l.status === 'completed').length,
+        failed_imports: list.filter(l => l.status === 'failed').length,
+        total_records_imported: list.reduce((s, l) => s + (l.successful_records || 0), 0)
+      }
       setStatistics(stats)
     } catch (error) {
       console.error('Error loading statistics:', error)
+      setStatistics(null)
     }
   }
 

@@ -13,11 +13,11 @@ app.use(express.static(path.join(__dirname, 'dist')));
 
 // Database connection
 const pool = new Pool({
-  user: 'postgres',
-  host: 'localhost',
-  database: 'FLB_MOWS',
-  password: 'Admin123',
-  port: 5432,
+  user: process.env.DB_USER || 'postgres',
+  host: process.env.DB_HOST || 'postgres',
+  database: process.env.DB_NAME || 'FLB_MOWS',
+  password: process.env.DB_PASSWORD || 'Admin123',
+  port: process.env.DB_PORT || 5432,
 });
 
 // Test database connection
@@ -30,33 +30,649 @@ pool.on('error', (err) => {
 });
 
 // API Routes
+-February====================
+// RS232 Scale Integration - Vibra Scale Configuration
+// =========================
+// Konfigurasi RS232 sesuai spesifikasi:
+// - Baud rate: 9600
+// - Data bits: 8
+// - Stop bits: 2
+// - Parity: none
+// - Control lines: assert DTR/RTS saat open
+// - Port Windows: dukung normalisasi COM10+ (\\\\.\\COM10)
+// - Tidak menggunakan port jika sedang dipakai aplikasi lain
+let scaleConfig = {
+  enabled: false,
+  model: 'vibra',
+  port: process.env.SCALE_PORT || 'COM1',
+  baudRate: 9600,
+  dataBits: 8,
+  parity: 'none',
+  stopBits: 2,
+  timeoutMs: 3000,
+  assertDTR: true,  // Assert DTR saat open port
+  assertRTS: true   // Assert RTS saat open port
+};
 
-// Get all products (SKU/Finished Products)
-app.get('/api/products', async (req, res) => {
+let SerialPortLib = null;
+let activePort = null; // Track active port to prevent multiple opens
+let lastReadTime = 0;
+const MIN_READ_INTERVAL = 200; // Minimum 200ms between reads
+let pendingRead = null; // Queue for concurrent requests
+
+try {
+  SerialPortLib = require('serialport');
+} catch (_) {
+  console.warn('⚠️  serialport module not installed. Scale integration disabled.');
+}
+
+// Normalize Windows COM port (COM10+ needs \\\\.\\ prefix)
+function normalizePort(portPath) {
+  if (process.platform === 'win32' && /^COM\d+$/i.test(portPath)) {
+    const num = parseInt(portPath.replace(/COM/i, ''), 10);
+    if (num >= 10) {
+      return `\\\\.\\${portPath}`;
+    }
+  }
+  return portPath;
+}
+
+// Parse Vibra format: '+000085.9 G S' -> { weight: 0.0859, unit: 'kg', stable: true }
+// Format: (sign)(6 digit).(1 digit) spasi unit G/K spasi status S/I
+// Example: '+000085.9 G S' (sign)(6 digit).(1 digit) space unit space status
+function parseVibraData(rawData) {
+  // Clean data: remove newlines, carriage returns, and trim
+  const cleaned = rawData.replace(/[\r\n]/g, '').trim();
+  
+  // Match pattern: sign + 6 digits + dot + 1 digit + space + unit (G/K) + space + status (S/I)
+  // Allow for multiple spaces between fields
+  const match = cleaned.match(/^([+-])(\d{6})\.(\d)\s+([GK])\s+([SI])\s*$/);
+  if (!match) return null;
+  
+  const [, sign, whole, decimal, unit, status] = match;
+  const numericValue = parseFloat(`${sign}${whole}.${decimal}`);
+  
+  // Parsing rules:
+  // - Jika unit G (gram), konversi ke kg: kg = nilai_g / 1000
+  // - Jika unit K (kg), gunakan langsung
+  let weightKg = numericValue;
+  if (unit === 'G') {
+    weightKg = numericValue / 1000; // gram to kg
+  } // else unit === 'K', already in kg
+  
+  return {
+    weight: weightKg,
+    weightOriginal: numericValue,
+    unit: 'kg',
+    originalUnit: unit,
+    stable: status === 'S',
+    status: status === 'S' ? 'stable' : 'unstable',
+    raw: cleaned
+  };
+}
+
+app.get('/api/scale/config', (req, res) => {
+  res.json({ 
+    success: true, 
+    data: scaleConfig, 
+    serialAvailable: !!SerialPortLib,
+    portActive: !!activePort
+  });
+});
+
+app.post('/api/scale/config', async (req, res) => {
   try {
+    const cfg = req.body || {};
+    // Preserve fixed settings, only allow port change
+    scaleConfig = { 
+      ...scaleConfig, 
+      port: cfg.port || scaleConfig.port,
+      enabled: cfg.enabled !== undefined ? cfg.enabled : scaleConfig.enabled
+    };
+    
+    // Close active port if port changed
+    if (activePort && activePort.path !== normalizePort(scaleConfig.port)) {
+      try {
+        await new Promise((resolve) => {
+          activePort.close(() => resolve());
+        });
+      } catch (_) {}
+      activePort = null;
+    }
+    
+    res.json({ success: true, data: scaleConfig });
+  } catch (error) {
+    res.status(400).json({ success: false, error: 'Invalid config', details: error.message });
+  }
+});
+
+app.get('/api/scale/ports', async (req, res) => {
+  try {
+    if (!SerialPortLib) return res.json({ success: true, data: [] });
+    const { SerialPort } = SerialPortLib;
+    const ports = await SerialPort.list();
+    res.json({ 
+      success: true, 
+      data: ports.map(p => ({ 
+        path: p.path, 
+        manufacturer: p.manufacturer || '',
+        normalized: normalizePort(p.path)
+      })) 
+    });
+  } catch (error) {
+    res.status(500).json({ success: false, error: 'Failed to list ports', details: error.message });
+  }
+});
+
+app.get('/api/scale/read', async (req, res) => {
+  if (!SerialPortLib) {
+    return res.status(501).json({ success: false, error: 'Serialport module not available' });
+  }
+  
+  // Throttle requests to prevent too many concurrent opens
+  const now = Date.now();
+  if (now - lastReadTime < MIN_READ_INTERVAL) {
+    return res.status(429).json({ 
+      success: false, 
+      error: 'Too many requests. Please wait before reading again.' 
+    });
+  }
+ється
+  try {
+    const { SerialPort } = SerialPortLib;
+    const normalizedPort = normalizePort(scaleConfig.port);
+    
+    // If active port is different or closed, allow new connection
+    if (activePort && activePort.path === normalizedPort && activePort.isOpen) {
+      // Port already open, try to read from it instead of opening new
+      return res.status(409).json({ 
+        success: false, 
+        error: 'Port is busy. Close existing connection first.' 
+      });
+    }
+    
+    // Close any existing port before opening new one
+    if (activePort && activePort.isOpen) {
+      try {
+        await new Promise((resolve) => {
+          activePort.close(() => resolve());
+        });
+      } catch (_) {}
+      activePort = null;
+    }
+    
+    lastReadTime = Date.now();
+    
+    let port = null;
+    const chunks = [];
+    let resolved = false;
+    let timeoutId = null;
+    
+    const cleanup = () => {
+      try {
+        if (timeoutId) {
+          clearTimeout(timeoutId);
+          timeoutId = null;
+        }
+        if (port) {
+          // Close port asynchronously in background
+          if (port.isOpen) {
+            port.close((err) => {
+              if (err) console.error('Port close error:', err);
+            });
+          }
+          if (activePort === port) activePort = null;
+          port = null;
+        }
+      } catch (_) {}
+    };
+    
+    const finalize = (ok, payload) => {
+      if (resolved) return; // Prevent double response
+      resolved = true;
+      
+      // Send response immediately (synchronous)
+      if (!res.headersSent) {
+        try {
+          if (ok) {
+            res.json({ success: true, timestamp: new Date().toISOString(), ...payload });
+          } else {
+            res.status(504).json({ success: false, timestamp: new Date().toISOString(), ...payload });
+          }
+        } catch (err) {
+          console.error('Response send error:', err.message);
+        }
+      }
+      
+      // Cleanup in background (async)
+      cleanup();
+    };
+    
+    port = new SerialPort({
+      path: normalizedPort,
+      baudRate: scaleConfig.baudRate,
+      dataBits: scaleConfig.dataBits,
+      parity: scaleConfig.parity,
+      stopBits: scaleConfig.stopBits,
+      autoOpen: false
+    });
+    
+    activePort = port;
+    
+    port.on('data', (data) => {
+      if (resolved) return;
+      const text = data.toString();
+      chunks.push(text);
+      const fullBuffer = chunks.join('');
+      
+      // Try parsing Vibra format
+      // Data may come in chunks, so we try to parse the accumulated buffer
+      const parsed = parseVibraData(fullBuffer);
+      if (parsed) {
+        finalize(true, parsed);
+      } else if (fullBuffer.length > 50) {
+        // Buffer too long, might be corrupted or incomplete
+        // Try to find a complete line by looking for newline or checking if we have enough characters
+        const lines = fullBuffer.split(/[\r\n]/);
+        for (const line of lines) {
+          const lineParsed = parseVibraData(line);
+          if (lineParsed) {
+            finalize(true, lineParsed);
+            return;
+          }
+        }
+        // If no valid line found and buffer too long, report error
+        finalize(false, { error: 'Invalid data format', raw: fullBuffer.slice(0, 100) });
+      }
+    });
+    
+    port.on('error', (err) => {
+      if (resolved) return;
+      if (err.message && err.message.includes('cannot open')) {
+        finalize(false, { error: `Port ${scaleConfig.port} is busy or not available. Close other applications using this port.` });
+      } else {
+        finalize(false, { error: err.message || 'Port error' });
+      }
+    });
+    
+    port.open((err) => {
+      if (resolved) return;
+      
+      if (err) {
+        finalize(false, { 
+          error: err.message && err.message.includes('cannot open')
+            ? `Port ${scaleConfig.port} is busy or not available. Close other applications using this port.`
+            : `Failed to open port: ${err.message}`
+        });
+        return;
+      }
+      
+      // Assert DTR/RTS after opening
+      try {
+        if (scaleConfig.assertDTR) port.set({ dtr: true });
+        if (scaleConfig.assertRTS) port.set({ rts: true });
+      } catch (setErr) {
+        console.warn('Failed to set DTR/RTS:', setErr.message);
+      }
+    });
+    
+    // Set timeout (will be cleared in cleanup if response sent earlier)
+    timeoutId = setTimeout(() => {
+      if (!resolved) {
+        finalize(false, { error: 'Timeout: No data received from scale' });
+      }
+    }, scaleConfig.timeoutMs);
+  } catch (error) {
+    // Ensure response is sent even if error occurs before port setup
+    if (!res.headersSent) {
+      try {
+        res.status(500).json({ success: false, error: 'Failed to read scale', details: error.message });
+      } catch (err) {
+        console.error('Error sending error response:', err.message);
+      }
+    }
+  }
+});
+
+
+// Health check endpoint for Docker
+app.get('/api/health', async (req, res) => {
+  try {
+    // Test database connection
+    const client = await pool.connect();
+    await client.query('SELECT 1');
+    client.release();
+    
+    res.status(200).json({
+      status: 'healthy',
+      timestamp: new Date().toISOString(),
+      uptime: process.uptime(),
+      database: 'connected'
+    });
+  } catch (error) {
+    res.status(503).json({
+      status: 'unhealthy',
+      timestamp: new Date().toISOString(),
+      uptime: process.uptime(),
+      database: 'disconnected',
+      error: error.message
+    });
+  }
+});
+
+// Search formulations endpoint
+app.get('/api/formulations/search', async (req, res) => {
+  try {
+    const { q } = req.query;
+    
+    if (!q || q.length < 2) {
+      return res.json({
+        success: true,
+        data: [],
+        message: 'Query too short'
+      });
+    }
+
     const query = `
       SELECT 
-        mp.id,
+        id,
+        formulation_code,
+        formulation_name,
+        sku,
+        total_mass,
+        total_ingredients,
+        status
+      FROM master_formulation 
+      WHERE 
+        formulation_name ILIKE $1 
+        OR formulation_code ILIKE $1
+        OR sku ILIKE $1
+      ORDER BY formulation_name
+      LIMIT 10
+    `;
+    
+    const result = await pool.query(query, [`%${q}%`]);
+    
+    res.json({
+      success: true,
+      data: result.rows,
+      count: result.rows.length
+    });
+  } catch (error) {
+    console.error('Error searching formulations:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to search formulations',
+      details: error.message
+    });
+  }
+});
+
+// Get formulation ingredients endpoint
+app.get('/api/formulations/:id/ingredients', async (req, res) => {
+  try {
+    const { id } = req.params;
+    
+    const query = `
+      SELECT 
+        mfi.id,
+        mfi.target_mass,
         mp.product_code,
         mp.product_name,
         mp.product_category,
         mp.type_tolerance,
-        mp.status,
-        mp.created_at,
-        mp.updated_at,
-        mtg.code as tolerance_grouping_code,
-        mtg.name as tolerance_grouping_name
-      FROM master_product mp
-      LEFT JOIN master_tolerance_grouping mtg ON mp.tolerance_grouping_id = mtg.id
-      WHERE mp.product_category = 'sfg'
-      ORDER BY mp.product_name
+        mp.status as product_status
+      FROM master_formulation_ingredients mfi
+      JOIN master_product mp ON mfi.product_id = mp.id
+      WHERE mfi.formulation_id = $1
+      ORDER BY mfi.target_mass DESC
+    `;
+    
+    const result = await pool.query(query, [id]);
+    
+    res.json({
+      success: true,
+      data: result.rows,
+      count: result.rows.length
+    });
+  } catch (error) {
+    console.error('Error fetching formulation ingredients:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to fetch formulation ingredients',
+      details: error.message
+    });
+  }
+});
+
+// Save weighing progress endpoint
+app.post('/api/weighing/save-progress', async (req, res) => {
+  try {
+    const { moNumber, formulationId, ingredients, progress } = req.body;
+    
+    // Start transaction
+    await pool.query('BEGIN');
+    
+    // Create or update work order
+    const workOrderQuery = `
+      INSERT INTO work_orders (work_order_number, formulation_id, planned_quantity, status, created_by, created_at)
+      VALUES ($1, $2, $3, 'in_progress', NULL, CURRENT_TIMESTAMP)
+      ON CONFLICT (work_order_number) 
+      DO UPDATE SET 
+        status = 'in_progress',
+        updated_at = CURRENT_TIMESTAMP
+      RETURNING id
+    `;
+    
+    const workOrderResult = await pool.query(workOrderQuery, [
+      moNumber, 
+      formulationId, 
+      progress.totalQuantity || 1
+    ]);
+    
+    const workOrderId = workOrderResult.rows[0].id;
+    
+    // Save weighing progress for each ingredient
+    for (const ingredient of ingredients) {
+      const progressQuery = `
+        INSERT INTO weighing_progress (
+          work_order_id, 
+          ingredient_id, 
+          target_mass, 
+          actual_mass, 
+          status, 
+          created_at
+        )
+        VALUES ($1, $2, $3, $4, $5, CURRENT_TIMESTAMP)
+        ON CONFLICT (work_order_id, ingredient_id)
+        DO UPDATE SET 
+          actual_mass = $4,
+          status = $5,
+          updated_at = CURRENT_TIMESTAMP
+      `;
+      
+      await pool.query(progressQuery, [
+        workOrderId,
+        ingredient.id, // should be UUID of master_formulation_ingredients.id
+        ingredient.targetWeight || ingredient.target_mass || 0,
+        ingredient.currentWeight || ingredient.actualWeight || 0,
+        ingredient.status || 'pending'
+      ]);
+    }
+    
+    // Commit transaction
+    await pool.query('COMMIT');
+    
+    res.json({
+      success: true,
+      message: 'Weighing progress saved successfully',
+      workOrderId: workOrderId
+    });
+  } catch (error) {
+    // Rollback transaction
+    await pool.query('ROLLBACK');
+    
+    console.error('Error saving weighing progress:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to save weighing progress',
+      details: error.message
+    });
+  }
+});
+
+// Complete weighing endpoint
+app.post('/api/weighing/complete', async (req, res) => {
+  try {
+    const { moNumber, ingredients } = req.body;
+    
+    // Start transaction
+    await pool.query('BEGIN');
+    
+    // Update work order status to completed
+    const workOrderQuery = `
+      UPDATE work_orders 
+      SET status = 'completed', completed_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP
+      WHERE work_order_number = $1
+      RETURNING id
+    `;
+    
+    const workOrderResult = await pool.query(workOrderQuery, [moNumber]);
+    
+    if (workOrderResult.rows.length === 0) {
+      throw new Error('Work order not found');
+    }
+    
+    const workOrderId = workOrderResult.rows[0].id;
+    
+    // Update final weighing progress
+    for (const ingredient of ingredients) {
+      const progressQuery = `
+        UPDATE weighing_progress 
+        SET 
+          actual_mass = $3,
+          status = $4,
+          completed_at = CURRENT_TIMESTAMP,
+          updated_at = CURRENT_TIMESTAMP
+        WHERE work_order_id = $1 AND ingredient_id = $2
+      `;
+      
+      await pool.query(progressQuery, [
+        workOrderId,
+        ingredient.id,
+        ingredient.actualWeight || 0,
+        'completed'
+      ]);
+    }
+    
+    // Commit transaction
+    await pool.query('COMMIT');
+    
+    res.json({
+      success: true,
+      message: 'Weighing completed successfully',
+      workOrderId: workOrderId
+    });
+  } catch (error) {
+    // Rollback transaction
+    await pool.query('ROLLBACK');
+    
+    console.error('Error completing weighing:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to complete weighing',
+      details: error.message
+    });
+  }
+});
+
+// Production history list
+app.get('/api/history', async (req, res) => {
+  try {
+    const query = `
+      SELECT 
+        wo.id,
+        wo.work_order_number as work_order,
+        wo.formulation_id,
+        mf.formulation_name,
+        mf.formulation_code as sku,
+        wo.planned_quantity as total_weight,
+        wo.status,
+        wo.created_at as start_time,
+        wo.completed_at as end_time
+      FROM work_orders wo
+      LEFT JOIN master_formulation mf ON wo.formulation_id = mf.id
+      ORDER BY wo.created_at DESC
+      LIMIT 200
+    `;
+    const result = await pool.query(query);
+    res.json({ success: true, data: result.rows });
+  } catch (error) {
+    console.error('Error fetching history:', error);
+    res.status(500).json({ success: false, error: 'Failed to fetch history', details: error.message });
+  }
+});
+
+// Work order details and progress
+app.get('/api/work-orders/:mo', async (req, res) => {
+  try {
+    const { mo } = req.params;
+    const woResult = await pool.query(
+      `SELECT id, work_order_number, formulation_id, planned_quantity, status, created_at, completed_at 
+       FROM work_orders WHERE work_order_number = $1`,
+      [mo]
+    );
+    if (woResult.rows.length === 0) {
+      return res.json({ success: true, data: null });
+    }
+    const wo = woResult.rows[0];
+    const ingResult = await pool.query(
+      `SELECT 
+         mfi.id as ingredient_id,
+         mfi.target_mass,
+         mp.product_code,
+         mp.product_name,
+         COALESCE(wp.actual_mass, 0) as actual_mass,
+         COALESCE(wp.status, 'pending') as status
+       FROM master_formulation_ingredients mfi
+       JOIN master_product mp ON mfi.product_id = mp.id
+       LEFT JOIN weighing_progress wp ON wp.work_order_id = $1 AND wp.ingredient_id = mfi.id
+       WHERE mfi.formulation_id = $2
+       ORDER BY mfi.target_mass DESC`,
+      [wo.id, wo.formulation_id]
+    );
+    res.json({ success: true, data: { workOrder: wo, ingredients: ingResult.rows } });
+  } catch (error) {
+    console.error('Error fetching work order detail:', error);
+    res.status(500).json({ success: false, error: 'Failed to fetch work order', details: error.message });
+  }
+});
+
+// Get all products (SFG/Mixing data from formulations)
+app.get('/api/products', async (req, res) => {
+  try {
+    const query = `
+      SELECT 
+        mf.id,
+        mf.formulation_code as product_code,
+        mf.formulation_name as product_name,
+        'sfg' as product_category,
+        'standard' as type_tolerance,
+        mf.status,
+        mf.created_at,
+        mf.updated_at,
+        NULL as tolerance_grouping_code,
+        NULL as tolerance_grouping_name
+      FROM master_formulation mf
+      ORDER BY mf.formulation_name
     `;
     
     const result = await pool.query(query);
     res.json({
       success: true,
       data: result.rows,
-      count: result.rows.length
+      count: result.rows.length,
+      category: 'sfg'
     });
   } catch (error) {
     console.error('Error fetching products:', error);
@@ -520,6 +1136,7 @@ app.post('/api/preview-import', async (req, res) => {
     const csv = require('csv-parser');
 
     const fullRefresh = req.body.fullRefresh === 'true';
+    let logId = null; // Declare logId outside try block for error handling
 
     try {
       const filename = req.file.originalname;
@@ -733,6 +1350,7 @@ app.post('/api/import-database', async (req, res) => {
     const csv = require('csv-parser');
 
     const fullRefresh = req.body.fullRefresh === 'true';
+    let logId = null; // Declare logId outside try block for error handling
 
     try {
       const filename = req.file.originalname;
@@ -760,10 +1378,10 @@ app.post('/api/import-database', async (req, res) => {
         `INSERT INTO import_logs (import_type, source_type, source_name, status, imported_by, started_at)
          VALUES ($1, $2, $3, $4, $5, CURRENT_TIMESTAMP)
          RETURNING id`,
-        ['master_formulation', 'file', filename, 'in_progress', 'b55f0171-68a1-451c-a428-0c160332a561']
+        ['master_formulation', 'file', filename, 'in_progress', null]
       );
       
-      const logId = logResult.rows[0].id;
+      logId = logResult.rows[0].id;
       
       // Read and parse CSV
       const csvData = [];
@@ -1125,3 +1743,4 @@ process.on('SIGINT', async () => {
 });
 
 module.exports = app;
+

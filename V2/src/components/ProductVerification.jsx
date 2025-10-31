@@ -18,7 +18,7 @@ const ProductVerification = ({ ingredient, onVerify, onClose }) => {
     
     // Simulate verification process
     setTimeout(() => {
-      const isValid = scannedCode.trim() === ingredient.id
+      const isValid = scannedCode.trim() === (ingredient.code || ingredient.id)
       setVerificationResult(isValid)
       setIsVerifying(false)
       
@@ -96,7 +96,7 @@ const ProductVerification = ({ ingredient, onVerify, onClose }) => {
             <input
               type="text"
               className="form-input readonly"
-              value={ingredient.id}
+              value={ingredient.code || ingredient.id}
               readOnly
             />
           </div>

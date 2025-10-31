@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react'
+import api from '../services/api'
 import { History as HistoryIcon, Search, Filter, Download, Eye, Calendar, Clock, User, Package, Database } from 'lucide-react'
 import ImportHistory from './ImportHistory'
 
@@ -12,80 +13,34 @@ const History = () => {
   const [selectedUser, setSelectedUser] = useState('all')
   const [showDetails, setShowDetails] = useState(null)
 
-  // Mock data history
-  const mockHistories = [
-    {
-      id: 1,
-      workOrder: 'PROD/MO/25739',
-      sku: 'SKU001',
-      formulaName: 'MIXING - ICY MINT',
-      operator: 'Faliq',
-      startTime: '2024-01-20 08:30:00',
-      endTime: '2024-01-20 10:45:00',
-      duration: '2h 15m',
-      status: 'completed',
-      totalWeight: 99000.0,
-      ingredients: [
-        { name: 'SALTNIC A6H1007', target: 11880.0, actual: 11880.0, status: 'completed' },
-        { name: 'PROPYLENE GLYCOL (PG)', target: 5445.0, actual: 5445.0, status: 'completed' },
-        { name: 'VEGETABLE GLYCERIN (VG)', target: 39600.0, actual: 39600.0, status: 'completed' }
-      ],
-      notes: 'Produksi berjalan lancar, semua parameter sesuai standar'
-    },
-    {
-      id: 2,
-      workOrder: 'PROD/MO/25732',
-      sku: 'SKU002',
-      formulaName: 'MIXING - FOOM X A',
-      operator: 'Operator 1',
-      startTime: '2024-01-20 11:00:00',
-      endTime: '2024-01-20 13:30:00',
-      duration: '2h 30m',
-      status: 'completed',
-      totalWeight: 36000.0,
-      ingredients: [
-        { name: 'NICBOOSTER', target: 90.0, actual: 90.0, status: 'completed' },
-        { name: 'PROPYLENE (PG)', target: 702.0, actual: 702.0, status: 'completed' },
-        { name: 'VEGETABLE GLYCERIN (VG)', target: 16200.0, actual: 16200.0, status: 'completed' }
-      ],
-      notes: 'Ada sedikit delay karena pergantian bahan'
-    },
-    {
-      id: 3,
-      workOrder: 'PROD/MO/25725',
-      sku: 'SKU003',
-      formulaName: 'MIXING - VANILLA CREAM',
-      operator: 'Supervisor',
-      startTime: '2024-01-19 14:00:00',
-      endTime: null,
-      duration: 'In Progress',
-      status: 'in_progress',
-      totalWeight: 50000.0,
-      ingredients: [
-        { name: 'VANILLA EXTRACT', target: 500.0, actual: 450.0, status: 'in_progress' },
-        { name: 'CREAM BASE', target: 49500.0, actual: 0.0, status: 'pending' }
-      ],
-      notes: 'Sedang dalam proses penimbangan'
-    },
-    {
-      id: 4,
-      workOrder: 'PROD/MO/25718',
-      sku: 'SKU001',
-      formulaName: 'MIXING - ICY MINT',
-      operator: 'Faliq',
-      startTime: '2024-01-19 09:00:00',
-      endTime: '2024-01-19 09:15:00',
-      duration: '15m',
-      status: 'cancelled',
-      totalWeight: 0.0,
-      ingredients: [],
-      notes: 'Dibatalkan karena masalah kualitas bahan'
-    }
-  ]
+  const mockHistories = []
 
   useEffect(() => {
-    setHistories(mockHistories)
-    setFilteredHistories(mockHistories)
+    const fetchHistory = async () => {
+      try {
+        const resp = await api.getProductionHistory()
+        const list = (resp && resp.data) || []
+        const normalized = list.map((h, idx) => ({
+          id: h.id || idx,
+          workOrder: h.work_order,
+          sku: h.sku || '',
+          formulaName: h.formulation_name || '',
+          operator: h.operator || 'Operator',
+          startTime: h.start_time,
+          endTime: h.end_time,
+          duration: h.end_time ? 'Completed' : 'In Progress',
+          status: h.status || 'in_progress',
+          totalWeight: parseFloat(h.total_weight) || 0,
+          ingredients: []
+        }))
+        setHistories(normalized)
+        setFilteredHistories(normalized)
+      } catch (e) {
+        setHistories([])
+        setFilteredHistories([])
+      }
+    }
+    fetchHistory()
   }, [])
 
   useEffect(() => {
