@@ -1,6 +1,0 @@
-formulationCode,formulationName,productCode,productName,targetMass,totalMass,uom,totalIngredient,status,mustFollowOrder,min,max,toleranceGroupingName,toleranceType,maxAllowedWeighingQty,implementToleranceGrouping,instruction
-TEST-FORMULATION-001,TEST FORMULATION 001,TEST-PRODUCT-001,TEST PRODUCT 001,100,1000,g,1,active,FALSE,0,0,timbanganKecil,mass,5000,TRUE,-
-TEST-FORMULATION-001,TEST FORMULATION 001,TEST-PRODUCT-002,TEST PRODUCT 002,200,1000,g,1,active,FALSE,0,0,timbanganKecil,mass,5000,TRUE,-
-
-
-

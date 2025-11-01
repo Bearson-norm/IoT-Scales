@@ -19,14 +19,30 @@ class ApiService {
 
     try {
       const response = await fetch(url, config);
-      const data = await response.json();
-
+      
+      // Check if response is ok before parsing JSON
       if (!response.ok) {
-        throw new Error(data.error || `HTTP error! status: ${response.status}`);
+        let errorData;
+        try {
+          errorData = await response.json();
+        } catch (e) {
+          // If JSON parsing fails, create a basic error
+          errorData = { 
+            error: `HTTP ${response.status}: ${response.statusText}`,
+            details: 'Unable to parse error response'
+          };
+        }
+        throw new Error(errorData.error || errorData.details || `HTTP error! status: ${response.status}`);
       }
-
+      
+      const data = await response.json();
       return data;
     } catch (error) {
+      // Handle network errors separately
+      if (error.name === 'TypeError' && error.message.includes('fetch')) {
+        console.error(`API Error (${endpoint}): Network error - Server may not be running`);
+        throw new Error('Failed to connect to server. Please ensure the server is running.');
+      }
       console.error(`API Error (${endpoint}):`, error);
       throw error;
     }

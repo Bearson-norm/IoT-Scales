@@ -77,25 +77,12 @@ CREATE TABLE IF NOT EXISTS work_orders (
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
 );
 
-CREATE TABLE IF NOT EXISTS weighing_sessions (
-    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-    work_order_id UUID NOT NULL REFERENCES work_orders(id),
-    product_id UUID NOT NULL REFERENCES master_product(id),
-    target_weight DECIMAL(12,3) NOT NULL,
-    actual_weight DECIMAL(12,3),
-    tolerance_min DECIMAL(12,3) NOT NULL,
-    tolerance_max DECIMAL(12,3) NOT NULL,
-    status VARCHAR(20) NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'in_progress', 'completed', 'failed')),
-    operator_id UUID NULL REFERENCES master_user(id),
-    started_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
-    completed_at TIMESTAMP WITH TIME ZONE,
-    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
-    updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
-);
+-- weighing_sessions table is defined in 02-weighing.sql with correct structure
+-- Removed old definition to avoid conflict
 
 CREATE TABLE IF NOT EXISTS barcode_scans (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-    session_id UUID REFERENCES weighing_sessions(id),
+    session_id UUID, -- Will be updated to reference weighing_sessions after table is created
     barcode VARCHAR(255) NOT NULL,
     scan_type VARCHAR(20) NOT NULL CHECK (scan_type IN ('mo', 'sku', 'quantity', 'raw_material')),
     scanned_data JSONB,
@@ -144,7 +131,7 @@ CREATE TABLE IF NOT EXISTS server_database_configs (
 CREATE INDEX IF NOT EXISTS idx_master_product_code ON master_product(product_code);
 CREATE INDEX IF NOT EXISTS idx_master_formulation_code ON master_formulation(formulation_code);
 CREATE INDEX IF NOT EXISTS idx_work_orders_number ON work_orders(work_order_number);
-CREATE INDEX IF NOT EXISTS idx_weighing_sessions_work_order ON weighing_sessions(work_order_id);
+-- weighing_sessions indexes are defined in 02-weighing.sql
 CREATE INDEX IF NOT EXISTS idx_barcode_scans_session ON barcode_scans(session_id);
 CREATE INDEX IF NOT EXISTS idx_import_logs_type ON import_logs(import_type);
 CREATE INDEX IF NOT EXISTS idx_import_logs_status ON import_logs(status);
@@ -165,7 +152,7 @@ CREATE TRIGGER trg_update_master_product BEFORE UPDATE ON master_product FOR EAC
 CREATE TRIGGER trg_update_master_formulation BEFORE UPDATE ON master_formulation FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
 CREATE TRIGGER trg_update_master_user BEFORE UPDATE ON master_user FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
 CREATE TRIGGER trg_update_work_orders BEFORE UPDATE ON work_orders FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
-CREATE TRIGGER trg_update_weighing_sessions BEFORE UPDATE ON weighing_sessions FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+-- weighing_sessions trigger is not needed as it doesn't have updated_at column in new structure
 CREATE TRIGGER trg_update_server_database_configs BEFORE UPDATE ON server_database_configs FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
 
 

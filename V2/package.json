@@ -2,7 +2,8 @@
   "name": "prisma-form-pro",
   "version": "1.7.0",
   "description": "Manufacturing Weighing and Mixing Application",
-  "main": "index.js",
+  "main": "server.js",
+  "bin": "server.js",
   "scripts": {
     "dev": "vite",
     "build": "vite build",
@@ -16,7 +17,10 @@
     "docker:down": "docker-compose down",
     "docker:logs": "docker-compose logs -f",
     "docker:restart": "docker-compose restart",
-    "docker:clean": "docker-compose down -v --remove-orphans && docker system prune -f"
+    "docker:clean": "docker-compose down -v --remove-orphans && docker system prune -f",
+    "build:package": "node build-package.js",
+    "package": "build-package.bat",
+    "build:installer": "iscc installer.iss"
   },
   "dependencies": {
     "@zxing/library": "^0.21.3",
@@ -39,5 +43,18 @@
     "@types/react-dom": "^18.0.11",
     "@vitejs/plugin-react": "^3.1.0",
     "vite": "^4.1.0"
+  },
+  "pkg": {
+    "scripts": [
+      "server.js"
+    ],
+    "assets": [
+      "database/**/*",
+      "package.json"
+    ],
+    "targets": [
+      "node18-win-x64"
+    ],
+    "outputPath": "release"
   }
 }

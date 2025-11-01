@@ -1,0 +1,154 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Vibra Scale RS232 Reader</title>
+    <link rel="stylesheet" href="vibra-scale-reader.css">
+</head>
+<body>
+    <div class="container">
+        <header class="header">
+            <h1>Vibra Scale RS232 Reader</h1>
+            <p>Real-time weight reading from Vibra scale</p>
+        </header>
+
+        <div class="main-content">
+            <!-- Connection Panel -->
+            <div class="panel connection-panel">
+                <h2>Koneksi RS232</h2>
+                <div class="connection-controls">
+                    <div class="config-group">
+                        <label for="port-select">Port COM:</label>
+                        <select id="port-select">
+                            <option value="">Pilih Port COM...</option>
+                        </select>
+                        <div class="port-buttons">
+                            <button id="refresh-ports" class="btn btn-secondary">Refresh</button>
+                            <button id="request-port" class="btn btn-primary">Request Port</button>
+                        </div>
+                    </div>
+                    
+                    <div class="config-group">
+                        <label>Konfigurasi:</label>
+                        <div class="config-display">
+                            <span>Baudrate: 9600</span>
+                            <span>Data Bits: 8</span>
+                            <span>Stop Bits: 2</span>
+                            <span>Parity: None</span>
+                        </div>
+                    </div>
+                    
+                    <div class="connection-status">
+                        <div id="connection-indicator" class="status-indicator disconnected">
+                            <span class="status-dot"></span>
+                            <span id="connection-text">Disconnected</span>
+                        </div>
+                        <button id="connect-btn" class="btn btn-primary">Connect</button>
+                        <button id="disconnect-btn" class="btn btn-danger" disabled>Disconnect</button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Weight Display Panel -->
+            <div class="panel weight-panel">
+                <h2>Display Berat</h2>
+                <div class="weight-display">
+                    <div id="weight-value" class="weight-number">0.000000</div>
+                    <div class="weight-unit">kg</div>
+                </div>
+                <div class="weight-info">
+                    <div class="info-item">
+                        <span class="label">Status:</span>
+                        <span id="weight-status" class="value">Stabil</span>
+                    </div>
+                    <div class="info-item">
+                        <span class="label">Terakhir Update:</span>
+                        <span id="last-update" class="value">-</span>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Data Log Panel -->
+            <div class="panel log-panel">
+                <h2>Data Log</h2>
+                <div class="log-controls">
+                    <button id="clear-log" class="btn btn-secondary">Clear Log</button>
+                    <button id="export-log" class="btn btn-secondary">Export CSV</button>
+                    <label class="auto-scroll">
+                        <input type="checkbox" id="auto-scroll" checked>
+                        Auto Scroll
+                    </label>
+                </div>
+                <div id="log-container" class="log-container">
+                    <div class="log-entry header">
+                        <span class="timestamp">Timestamp</span>
+                        <span class="weight">Weight (kg)</span>
+                        <span class="status">Status</span>
+                        <span class="raw-data">Raw Data</span>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Settings Panel -->
+            <div class="panel settings-panel">
+                <h2>Pengaturan</h2>
+                <div class="settings-group">
+                    <label for="update-interval">Update Interval (ms):</label>
+                    <input type="number" id="update-interval" value="100" min="50" max="1000">
+                </div>
+                <div class="settings-group">
+                    <label for="decimal-places">Decimal Places:</label>
+                    <input type="number" id="decimal-places" value="6" min="0" max="8">
+                </div>
+                <div class="settings-group">
+                    <label for="stability-threshold">Stability Threshold:</label>
+                    <input type="number" id="stability-threshold" value="0.001" step="0.001" min="0">
+                </div>
+                <div class="settings-group">
+                    <label for="unit-select">Unit:</label>
+                    <select id="unit-select">
+                        <option value="kg">Kilogram (kg)</option>
+                        <option value="g">Gram (g)</option>
+                        <option value="lb">Pound (lb)</option>
+                    </select>
+                </div>
+            </div>
+        </div>
+
+        <!-- Status Bar -->
+        <div class="status-bar">
+            <div class="status-item">
+                <span class="label">Port:</span>
+                <span id="current-port" class="value">-</span>
+            </div>
+            <div class="status-item">
+                <span class="label">Data Rate:</span>
+                <span id="data-rate" class="value">0/min</span>
+            </div>
+            <div class="status-item">
+                <span class="label">Uptime:</span>
+                <span id="uptime" class="value">00:00:00</span>
+            </div>
+        </div>
+    </div>
+
+    <!-- Error Modal -->
+    <div id="error-modal" class="modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3>Error</h3>
+                <button class="close-btn">&times;</button>
+            </div>
+            <div class="modal-body">
+                <p id="error-message"></p>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-primary" id="error-ok">OK</button>
+            </div>
+        </div>
+    </div>
+
+    <script src="vibra-scale-reader.js"></script>
+</body>
+</html>

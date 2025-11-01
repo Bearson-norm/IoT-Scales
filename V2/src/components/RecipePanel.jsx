@@ -16,14 +16,26 @@ const RecipePanel = ({ workOrder, recipe, onIngredientClick, onStartScan, onStar
 
   const getProgressPercentage = (ingredient) => {
     if (ingredient.targetWeight === 0) return 0
-    return Math.min((ingredient.currentWeight / ingredient.targetWeight) * 100, 100)
+    // Use totalWeight (savedWeight + currentWeight) or fallback to currentWeight
+    const totalWeight = ingredient.totalWeight || (ingredient.savedWeight || 0) + (ingredient.currentWeight || 0)
+    return Math.min((totalWeight / ingredient.targetWeight) * 100, 100)
   }
 
   const getIngredientStatus = (ingredient) => {
     const progress = getProgressPercentage(ingredient)
     if (progress >= 100) return 'completed'
     if (ingredient.status === 'weighing') return 'active'
+    // If has saved weight, consider it as in progress
+    if ((ingredient.savedWeight || 0) > 0) return 'active'
     return 'pending'
+  }
+  
+  const getDisplayWeight = (ingredient) => {
+    // Display total weight (saved + current) for better visibility
+    const savedWeight = ingredient.savedWeight || 0
+    const currentWeight = ingredient.currentWeight || 0
+    const totalWeight = ingredient.totalWeight || (savedWeight + currentWeight)
+    return totalWeight
   }
 
   return (
@@ -109,8 +121,18 @@ const RecipePanel = ({ workOrder, recipe, onIngredientClick, onStartScan, onStar
                 
                 <div className="ingredient-weight">
                   <span className="weight-text">
-                    {ingredient.currentWeight.toFixed(1)} / {ingredient.targetWeight.toFixed(1)} g
+                    {getDisplayWeight(ingredient).toFixed(1)} / {ingredient.targetWeight.toFixed(1)} g
                   </span>
+                  {(ingredient.savedWeight || 0) > 0 && (
+                    <span className="saved-weight-indicator" style={{ 
+                      fontSize: '10px', 
+                      color: '#6b7280', 
+                      display: 'block',
+                      marginTop: '2px'
+                    }}>
+                      (Saved: {(ingredient.savedWeight || 0).toFixed(1)}g)
+                    </span>
+                  )}
                 </div>
                 
                 <div className="progress-bar">

@@ -1,0 +1,43 @@
+# Dependencies
+node_modules/
+release/node_modules/
+Hardware/node_modules/
+
+# Build outputs
+dist/
+release/*.exe
+Hardware/build/
+
+# Logs
+*.log
+npm-debug.log*
+
+# Environment
+.env
+.env.local
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Uploads and temp files
+uploads/*
+!uploads/.gitkeep
+release/uploads/*
+!release/uploads/.gitkeep
+
+# Test files
+test-*.csv
+Formula to Input*.xlsx
+Formula to Input*.csv
+
+# Build artifacts
+*.exe
+!release/*.exe

@@ -3,7 +3,7 @@ import api from '../services/api'
 import { History as HistoryIcon, Search, Filter, Download, Eye, Calendar, Clock, User, Package, Database } from 'lucide-react'
 import ImportHistory from './ImportHistory'
 
-const History = () => {
+const History = ({ onNavigateToDetail }) => {
   const [activeTab, setActiveTab] = useState('production')
   const [histories, setHistories] = useState([])
   const [filteredHistories, setFilteredHistories] = useState([])
@@ -24,18 +24,36 @@ const History = () => {
           id: h.id || idx,
           workOrder: h.work_order,
           sku: h.sku || '',
-          formulaName: h.formulation_name || '',
+          formulaName: h.formulation_name || 'Unknown',
           operator: h.operator || 'Operator',
-          startTime: h.start_time,
+          productionDate: h.production_date || h.start_time,
+          startTime: h.production_date || h.start_time,
           endTime: h.end_time,
           duration: h.end_time ? 'Completed' : 'In Progress',
           status: h.status || 'in_progress',
-          totalWeight: parseFloat(h.total_weight) || 0,
-          ingredients: []
+          plannedQuantity: parseFloat(h.planned_quantity || 0),
+          ingredients: (h.ingredients || []).map(ing => ({
+            id: ing.ingredient_id,
+            code: ing.ingredient_code,
+            name: ing.ingredient_name,
+            targetMass: parseFloat(ing.target_mass || 0),
+            weighingResult: parseFloat(ing.weighing_result || 0),
+            weighingTime: ing.weighing_time,
+            status: ing.status || 'pending',
+            toleranceMin: parseFloat(ing.tolerance_min || 0),
+            toleranceMax: parseFloat(ing.tolerance_max || 0),
+            notes: ing.notes
+          }))
         }))
         setHistories(normalized)
         setFilteredHistories(normalized)
       } catch (e) {
+        console.error('Error fetching history:', e)
+        console.error('Error details:', e.message, e.stack)
+        // Show user-friendly error message
+        if (e.message && e.message.includes('Failed to fetch')) {
+          console.error('Network error: Server may not be running or endpoint not reachable')
+        }
         setHistories([])
         setFilteredHistories([])
       }
@@ -128,14 +146,35 @@ const History = () => {
 
   const formatDate = (dateString) => {
     if (!dateString) return '-'
-    const date = new Date(dateString)
-    return date.toLocaleString('id-ID', {
-      day: '2-digit',
-      month: '2-digit',
-      year: 'numeric',
-      hour: '2-digit',
-      minute: '2-digit'
-    })
+    try {
+      const date = new Date(dateString)
+      if (isNaN(date.getTime())) return '-'
+      return date.toLocaleString('id-ID', {
+        day: '2-digit',
+        month: '2-digit',
+        year: 'numeric',
+        hour: '2-digit',
+        minute: '2-digit',
+        second: '2-digit'
+      })
+    } catch (e) {
+      return '-'
+    }
+  }
+  
+  const formatDateOnly = (dateString) => {
+    if (!dateString) return '-'
+    try {
+      const date = new Date(dateString)
+      if (isNaN(date.getTime())) return '-'
+      return date.toLocaleDateString('id-ID', {
+        day: '2-digit',
+        month: '2-digit',
+        year: 'numeric'
+      })
+    } catch (e) {
+      return '-'
+    }
   }
 
   const users = ['all', 'Faliq', 'Operator 1', 'Supervisor', 'Administrator']
@@ -252,72 +291,216 @@ const History = () => {
 
       <div className="history-list">
         {filteredHistories.map(history => (
-          <div key={history.id} className="history-card">
-            <div className="history-header">
-              <div className="history-info">
-                <div className="work-order">{history.workOrder}</div>
-                <div className="formula-name">{history.formulaName}</div>
-                <div className="sku-info">SKU: {history.sku}</div>
+          <div key={history.id} className="history-card" style={{
+            border: '1px solid #e5e7eb',
+            borderRadius: '12px',
+            padding: '20px',
+            marginBottom: '16px',
+            backgroundColor: '#ffffff',
+            boxShadow: '0 1px 3px rgba(0, 0, 0, 0.1)'
+          }}>
+            {/* MO Card Header */}
+            <div className="history-header" style={{
+              borderBottom: '2px solid #f3f4f6',
+              paddingBottom: '16px',
+              marginBottom: '16px'
+            }}>
+              <div className="history-info" style={{ flex: 1 }}>
+                <div className="work-order" style={{
+                  fontSize: '20px',
+                  fontWeight: 'bold',
+                  color: '#1f2937',
+                  marginBottom: '8px'
+                }}>
+                  {history.workOrder}
+                </div>
+                <div className="formula-name" style={{
+                  fontSize: '16px',
+                  color: '#6b7280',
+                  marginBottom: '4px'
+                }}>
+                  {history.formulaName}
+                </div>
+                <div className="sku-info" style={{
+                  fontSize: '14px',
+                  color: '#9ca3af'
+                }}>
+                  SKU: {history.sku}
+                </div>
+                <div className="production-date" style={{
+                  fontSize: '14px',
+                  color: '#6b7280',
+                  marginTop: '8px',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '6px'
+                }}>
+                  <Calendar size={14} />
+                  <span>Tanggal Produksi: {formatDate(history.productionDate)}</span>
+                </div>
               </div>
               <div className="history-status">
                 <span 
                   className="status-badge"
-                  style={{ backgroundColor: getStatusColor(history.status) }}
+                  style={{ 
+                    backgroundColor: getStatusColor(history.status),
+                    padding: '6px 12px',
+                    borderRadius: '6px',
+                    color: '#fff',
+                    fontSize: '12px',
+                    fontWeight: '600'
+                  }}
                 >
                   {getStatusText(history.status)}
                 </span>
               </div>
             </div>
 
-            <div className="history-details">
-              <div className="detail-row">
-                <div className="detail-item">
-                  <User size={16} />
-                  <span>{history.operator}</span>
+            {/* Ingredients Weighing Cards */}
+            {history.ingredients && history.ingredients.length > 0 && (
+              <div className="weighing-details-section" style={{
+                marginTop: '16px'
+              }}>
+                <div style={{
+                  fontSize: '16px',
+                  fontWeight: '600',
+                  color: '#1f2937',
+                  marginBottom: '12px',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '8px'
+                }}>
+                  <Package size={18} />
+                  Hasil Penimbangan ({history.ingredients.length} bahan)
                 </div>
-                <div className="detail-item">
-                  <Clock size={16} />
-                  <span>{formatDate(history.startTime)}</span>
-                </div>
-                <div className="detail-item">
-                  <Package size={16} />
-                  <span>{history.totalWeight.toFixed(1)} g</span>
-                </div>
-                <div className="detail-item">
-                  <span>Durasi: {history.duration}</span>
+                
+                <div style={{
+                  display: 'grid',
+                  gap: '12px'
+                }}>
+                  {history.ingredients.map((ingredient, index) => (
+                    <div 
+                      key={ingredient.id || index}
+                      className="ingredient-weighing-card"
+                      style={{
+                        border: '1px solid #e5e7eb',
+                        borderRadius: '8px',
+                        padding: '12px',
+                        backgroundColor: '#f9fafb',
+                        display: 'flex',
+                        justifyContent: 'space-between',
+                        alignItems: 'center',
+                        transition: 'all 0.2s',
+                        cursor: 'pointer'
+                      }}
+                      onMouseEnter={(e) => {
+                        e.currentTarget.style.backgroundColor = '#f3f4f6'
+                        e.currentTarget.style.boxShadow = '0 2px 4px rgba(0, 0, 0, 0.1)'
+                      }}
+                      onMouseLeave={(e) => {
+                        e.currentTarget.style.backgroundColor = '#f9fafb'
+                        e.currentTarget.style.boxShadow = 'none'
+                      }}
+                    >
+                      <div style={{ flex: 1 }}>
+                        <div style={{
+                          fontSize: '14px',
+                          fontWeight: '600',
+                          color: '#1f2937',
+                          marginBottom: '4px'
+                        }}>
+                          {ingredient.name}
+                        </div>
+                        <div style={{
+                          fontSize: '12px',
+                          color: '#6b7280',
+                          marginBottom: '4px'
+                        }}>
+                          Code: {ingredient.code || '-'}
+                        </div>
+                        <div style={{
+                          fontSize: '13px',
+                          color: '#374151',
+                          fontWeight: '500'
+                        }}>
+                          Hasil: <strong style={{ color: '#059669' }}>{ingredient.weighingResult.toFixed(1)}g</strong> / Target: {ingredient.targetMass.toFixed(1)}g
+                        </div>
+                        {ingredient.weighingTime && (
+                          <div style={{
+                            fontSize: '11px',
+                            color: '#9ca3af',
+                            marginTop: '6px',
+                            display: 'flex',
+                            alignItems: 'center',
+                            gap: '4px'
+                          }}>
+                            <Clock size={12} />
+                            <span>Ditimbang: {formatDate(ingredient.weighingTime)}</span>
+                          </div>
+                        )}
+                      </div>
+                      <div style={{
+                        marginLeft: '12px',
+                        padding: '4px 8px',
+                        borderRadius: '4px',
+                        backgroundColor: getStatusColor(ingredient.status || 'pending'),
+                        color: '#fff',
+                        fontSize: '11px',
+                        fontWeight: '500'
+                      }}>
+                        {getStatusText(ingredient.status || 'pending')}
+                      </div>
+                    </div>
+                  ))}
                 </div>
               </div>
+            )}
 
-              {history.ingredients.length > 0 && (
-                <div className="ingredients-summary">
-                  <div className="ingredients-title">Bahan:</div>
-                  <div className="ingredients-list">
-                    {history.ingredients.map((ingredient, index) => (
-                      <span 
-                        key={index}
-                        className={`ingredient-tag ${ingredient.status}`}
-                      >
-                        {ingredient.name} ({ingredient.actual.toFixed(1)}/{ingredient.target.toFixed(1)}g)
-                      </span>
-                    ))}
-                  </div>
-                </div>
-              )}
+            {(!history.ingredients || history.ingredients.length === 0) && (
+              <div style={{
+                padding: '16px',
+                textAlign: 'center',
+                color: '#9ca3af',
+                fontSize: '14px',
+                fontStyle: 'italic'
+              }}>
+                Belum ada hasil penimbangan
+              </div>
+            )}
 
-              {history.notes && (
-                <div className="history-notes">
-                  <strong>Catatan:</strong> {history.notes}
-                </div>
-              )}
-            </div>
-
-            <div className="history-actions">
+            <div className="history-actions" style={{
+              marginTop: '16px',
+              paddingTop: '16px',
+              borderTop: '1px solid #e5e7eb',
+              display: 'flex',
+              justifyContent: 'flex-end',
+              gap: '8px'
+            }}>
               <button 
                 className="action-btn view"
-                onClick={() => setShowDetails(history)}
+                onClick={() => {
+                  // Navigate to detail page
+                  if (onNavigateToDetail) {
+                    onNavigateToDetail(history.workOrder)
+                  } else {
+                    window.location.hash = `#history-detail-${history.workOrder}`
+                  }
+                }}
+                style={{
+                  padding: '8px 16px',
+                  borderRadius: '6px',
+                  border: '1px solid #d1d5db',
+                  backgroundColor: '#fff',
+                  color: '#374151',
+                  cursor: 'pointer',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '6px',
+                  fontSize: '14px'
+                }}
               >
                 <Eye size={16} />
-                Detail
+                Lihat Detail
               </button>
             </div>
           </div>
@@ -331,9 +514,21 @@ const History = () => {
           <div className="empty-subtext">
             {searchTerm || selectedStatus !== 'all' || selectedDateRange !== 'all' || selectedUser !== 'all'
               ? 'Coba ubah filter pencarian' 
-              : 'History akan muncul setelah ada proses produksi'
+              : histories.length === 0 
+                ? 'Belum ada data history. History akan muncul setelah Anda melakukan penimbangan dan menyimpan progress.'
+                : 'History akan muncul setelah ada proses produksi'
             }
           </div>
+          {histories.length === 0 && (
+            <div style={{ marginTop: '16px', fontSize: '13px', color: '#6b7280' }}>
+              <div>Untuk membuat history:</div>
+              <div style={{ marginTop: '8px', paddingLeft: '16px' }}>
+                1. Scan MO (Work Order)<br/>
+                2. Lakukan penimbangan bahan<br/>
+                3. Klik "Save Progress" untuk menyimpan
+              </div>
+            </div>
+          )}
         </div>
       )}
 
@@ -363,7 +558,10 @@ const History = () => {
                     <strong>Operator:</strong> {showDetails.operator}
                   </div>
                   <div className="detail-item">
-                    <strong>Total Berat:</strong> {showDetails.totalWeight.toFixed(1)} g
+                    <strong>Planned Quantity:</strong> {showDetails.plannedQuantity.toFixed(1)} g
+                  </div>
+                  <div className="detail-item">
+                    <strong>Tanggal Produksi:</strong> {formatDate(showDetails.productionDate || showDetails.startTime)}
                   </div>
                 </div>
 
@@ -390,31 +588,45 @@ const History = () => {
                 </div>
               </div>
 
-              {showDetails.ingredients.length > 0 && (
+              {showDetails.ingredients && showDetails.ingredients.length > 0 && (
                 <div className="detail-section">
-                  <h4>Detail Bahan</h4>
+                  <h4>Detail Hasil Penimbangan</h4>
                   <div className="ingredients-table">
-                    <table>
+                    <table style={{ width: '100%', borderCollapse: 'collapse' }}>
                       <thead>
-                        <tr>
-                          <th>Nama Bahan</th>
-                          <th>Target (g)</th>
-                          <th>Actual (g)</th>
-                          <th>Status</th>
+                        <tr style={{ borderBottom: '2px solid #e5e7eb' }}>
+                          <th style={{ padding: '12px', textAlign: 'left', fontWeight: '600' }}>Nama Bahan</th>
+                          <th style={{ padding: '12px', textAlign: 'left', fontWeight: '600' }}>Code</th>
+                          <th style={{ padding: '12px', textAlign: 'right', fontWeight: '600' }}>Target (g)</th>
+                          <th style={{ padding: '12px', textAlign: 'right', fontWeight: '600' }}>Hasil (g)</th>
+                          <th style={{ padding: '12px', textAlign: 'center', fontWeight: '600' }}>Waktu Penimbangan</th>
+                          <th style={{ padding: '12px', textAlign: 'center', fontWeight: '600' }}>Status</th>
                         </tr>
                       </thead>
                       <tbody>
                         {showDetails.ingredients.map((ingredient, index) => (
-                          <tr key={index}>
-                            <td>{ingredient.name}</td>
-                            <td>{ingredient.target.toFixed(1)}</td>
-                            <td>{ingredient.actual.toFixed(1)}</td>
-                            <td>
+                          <tr key={ingredient.id || index} style={{ borderBottom: '1px solid #f3f4f6' }}>
+                            <td style={{ padding: '12px' }}>{ingredient.name}</td>
+                            <td style={{ padding: '12px', color: '#6b7280', fontSize: '13px' }}>{ingredient.code || '-'}</td>
+                            <td style={{ padding: '12px', textAlign: 'right' }}>{ingredient.targetMass.toFixed(1)}</td>
+                            <td style={{ padding: '12px', textAlign: 'right', fontWeight: '600', color: '#059669' }}>
+                              {ingredient.weighingResult.toFixed(1)}
+                            </td>
+                            <td style={{ padding: '12px', textAlign: 'center', fontSize: '13px', color: '#6b7280' }}>
+                              {ingredient.weighingTime ? formatDate(ingredient.weighingTime) : '-'}
+                            </td>
+                            <td style={{ padding: '12px', textAlign: 'center' }}>
                               <span 
                                 className="status-badge"
-                                style={{ backgroundColor: getStatusColor(ingredient.status) }}
+                                style={{ 
+                                  backgroundColor: getStatusColor(ingredient.status || 'pending'),
+                                  padding: '4px 8px',
+                                  borderRadius: '4px',
+                                  color: '#fff',
+                                  fontSize: '11px'
+                                }}
                               >
-                                {getStatusText(ingredient.status)}
+                                {getStatusText(ingredient.status || 'pending')}
                               </span>
                             </td>
                           </tr>

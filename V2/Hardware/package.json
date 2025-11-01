@@ -1,0 +1,32 @@
+{
+  "name": "vibra-scale-reader",
+  "version": "1.0.0",
+  "description": "Vibra RS232 scale reader with realtime WebSocket UI",
+  "main": "src/server.js",
+  "scripts": {
+    "start": "node src/server.js",
+    "dev": "nodemon src/server.js"
+  },
+  "keywords": [
+    "rs232",
+    "serial",
+    "scale",
+    "vibra",
+    "weight",
+    "iot"
+  ],
+  "author": "IoT Scale Project",
+  "license": "MIT",
+  "dependencies": {
+    "express": "^4.18.2",
+    "serialport": "^12.0.0",
+    "@serialport/parser-readline": "^12.0.0",
+    "ws": "^8.18.0"
+  },
+  "devDependencies": {
+    "nodemon": "^3.0.1"
+  },
+  "engines": {
+    "node": ">=16"
+  }
+}

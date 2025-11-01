@@ -6,14 +6,34 @@ Dokumentasi lengkap untuk IoT Scales V2, termasuk fitur baru Formula Import.
 ## Main Documentation
 
 ### 1. Setup and Installation
-- **[SETUP_GUIDE.md](../SETUP_GUIDE.md)**: Panduan setup lengkap dari nol
-- **[QUICK_START.md](../QUICK_START.md)**: Panduan quick start
-- **[TROUBLESHOOTING.md](../TROUBLESHOOTING.md)**: Panduan troubleshooting
+- **[SETUP_GUIDE.md](SETUP_GUIDE.md)**: Panduan setup lengkap dari nol
+- **[QUICK_START.md](QUICK_START.md)**: Panduan quick start
+- **[TROUBLESHOOTING.md](TROUBLESHOOTING.md)**: Panduan troubleshooting
 
 ### 2. Features Documentation
-- **[IMPORT_LOGGING_FEATURES.md](../IMPORT_LOGGING_FEATURES.md)**: Fitur import logging
-- **[FORMULA_IMPORT_FEATURES.md](../FORMULA_IMPORT_FEATURES.md)**: Fitur Formula Import
-- **[FORMULA_IMPORT_COMPLETE_GUIDE.md](../FORMULA_IMPORT_COMPLETE_GUIDE.md)**: Panduan lengkap Formula Import
+- **[IMPORT_LOGGING_FEATURES.md](IMPORT_LOGGING_FEATURES.md)**: Fitur import logging
+- **[FORMULA_IMPORT_FEATURES.md](FORMULA_IMPORT_FEATURES.md)**: Fitur Formula Import
+- **[FORMULA_IMPORT_COMPLETE_GUIDE.md](FORMULA_IMPORT_COMPLETE_GUIDE.md)**: Panduan lengkap Formula Import
+
+### 3. Database Documentation
+- **[DATABASE_CONFIGURATION.md](DATABASE_CONFIGURATION.md)**: Konfigurasi database
+- **[DATABASE_IMPORT_FEATURE.md](DATABASE_IMPORT_FEATURE.md)**: Fitur import database
+- **[DATABASE_STRUCTURE_UPDATE.md](DATABASE_STRUCTURE_UPDATE.md)**: Update struktur database
+
+### 4. Packaging & Deployment
+- **[PACKAGING_GUIDE.md](PACKAGING_GUIDE.md)**: Panduan packaging aplikasi
+- **[SERIALPORT_PACKAGING.md](SERIALPORT_PACKAGING.md)**: Packaging serialport module
+- **[SERVER_TROUBLESHOOTING.md](SERVER_TROUBLESHOOTING.md)**: Troubleshooting server
+
+### 5. Development & Testing
+- **[TESTING_INSTRUCTIONS.md](TESTING_INSTRUCTIONS.md)**: Instruksi testing
+- **[QUICK_STATS_FIX.md](QUICK_STATS_FIX.md)**: Quick stats fix
+- **[IMPORT_FIX_SUMMARY.md](IMPORT_FIX_SUMMARY.md)**: Summary import fix
+
+### 6. UI & Features
+- **[UI_ENHANCEMENTS.md](UI_ENHANCEMENTS.md)**: UI enhancements
+- **[UI_MASTER_PRODUCT_UPDATE.md](UI_MASTER_PRODUCT_UPDATE.md)**: Update master product UI
+- **[API_INTEGRATION_GUIDE.md](API_INTEGRATION_GUIDE.md)**: Panduan integrasi API
 
 ### 3. User Guides
 - **[FORMULA_IMPORT_README.md](FORMULA_IMPORT_README.md)**: Panduan Formula Import untuk user
@@ -111,9 +131,28 @@ Dokumentasi lengkap untuk IoT Scales V2, termasuk fitur baru Formula Import.
 
 ```
 docs/
-├── README.md                           # Documentation index
+├── README.md                           # Documentation index (this file)
 ├── FORMULA_IMPORT_README.md           # User guide Formula Import
+├── SETUP_GUIDE.md                      # Setup guide
+├── QUICK_START.md                      # Quick start guide
+├── TROUBLESHOOTING.md                  # Troubleshooting guide
+├── IMPORT_LOGGING_FEATURES.md          # Import logging features
+├── FORMULA_IMPORT_FEATURES.md          # Formula Import features
+├── FORMULA_IMPORT_COMPLETE_GUIDE.md    # Complete Formula Import guide
+├── PACKAGING_GUIDE.md                  # Packaging guide
+├── DATABASE_*.md                       # Database documentation
+├── SERVER_TROUBLESHOOTING.md           # Server troubleshooting
 └── [Other documentation files]
+
+scripts/
+├── fix-database.bat                    # Database fix script
+├── quick-fix.bat                       # Quick fix script
+└── setup-fix.bat                       # Setup fix script
+
+samples/
+├── test-import.csv                     # Sample import file
+├── populate-formulation-ingredients.js # Sample script
+└── Formula to Input*.xlsx              # Sample Excel files
 
 templates/
 ├── README.md                           # Templates guide
@@ -121,31 +160,33 @@ templates/
 └── [Other template files]
 
 [Root Directory]
-├── SETUP_GUIDE.md                      # Setup guide
-├── QUICK_START.md                      # Quick start guide
-├── TROUBLESHOOTING.md                  # Troubleshooting guide
-├── IMPORT_LOGGING_FEATURES.md          # Import logging features
-├── FORMULA_IMPORT_FEATURES.md          # Formula Import features
-├── FORMULA_IMPORT_COMPLETE_GUIDE.md    # Complete Formula Import guide
-└── [Other files]
+├── README.md                           # Main README
+├── setup.bat                           # Main setup script
+├── setup-database.bat                  # Database setup
+├── build-package.bat                   # Packaging script
+├── start-server.bat                    # Start server
+├── stop-server.bat                     # Stop server
+└── [Source files and configuration]
 ```
 
 ## Getting Started
 
 ### For New Users
-1. **Setup**: Baca `SETUP_GUIDE.md` untuk setup awal
-2. **Quick Start**: Ikuti `QUICK_START.md` untuk mulai cepat
-3. **Features**: Pelajari fitur di `IMPORT_LOGGING_FEATURES.md` dan `FORMULA_IMPORT_FEATURES.md`
+1. **Setup**: Baca `docs/SETUP_GUIDE.md` untuk setup awal
+2. **Quick Start**: Ikuti `docs/QUICK_START.md` untuk mulai cepat
+3. **Features**: Pelajari fitur di `docs/IMPORT_LOGGING_FEATURES.md` dan `docs/FORMULA_IMPORT_FEATURES.md`
 
 ### For Developers
-1. **Technical Details**: Baca `FORMULA_IMPORT_FEATURES.md` untuk detail teknis
-2. **Complete Guide**: Pelajari `FORMULA_IMPORT_COMPLETE_GUIDE.md` untuk panduan lengkap
-3. **Troubleshooting**: Gunakan `TROUBLESHOOTING.md` untuk masalah teknis
+1. **Technical Details**: Baca `docs/FORMULA_IMPORT_FEATURES.md` untuk detail teknis
+2. **Complete Guide**: Pelajari `docs/FORMULA_IMPORT_COMPLETE_GUIDE.md` untuk panduan lengkap
+3. **Packaging**: Lihat `docs/PACKAGING_GUIDE.md` untuk packaging aplikasi
+4. **Troubleshooting**: Gunakan `docs/TROUBLESHOOTING.md` untuk masalah teknis
 
 ### For Users
 1. **User Guide**: Baca `docs/FORMULA_IMPORT_README.md` untuk panduan user
 2. **Templates**: Gunakan `templates/README.md` untuk template files
-3. **Troubleshooting**: Gunakan `TROUBLESHOOTING.md` untuk masalah umum
+3. **Samples**: Lihat `samples/` untuk contoh file import
+4. **Troubleshooting**: Gunakan `docs/TROUBLESHOOTING.md` untuk masalah umum
 
 ## Support
 

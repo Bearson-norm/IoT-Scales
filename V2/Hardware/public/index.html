@@ -1,0 +1,788 @@
+<!doctype html>
+<html lang="id">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Vibra Scale RS232 (Node.js)</title>
+  <style>
+    body { font-family: Segoe UI, Arial, sans-serif; margin:0; padding:24px; background:#f5f7fb; }
+    .card { background:#fff; border:1px solid #e5e7eb; border-radius:12px; padding:16px; margin-bottom:16px; }
+    h1 { margin:0 0 16px 0; }
+    .row { display:flex; gap:8px; flex-wrap:wrap; }
+    select, button { padding:8px 12px; border-radius:8px; border:1px solid #d1d5db; background:#fff; }
+    button.primary { background:#6366f1; color:#fff; border-color:#6366f1; }
+    button.danger { background:#ef4444; color:#fff; border-color:#ef4444; }
+    .weight { font: bold 48px/1 Consolas, monospace; }
+    .muted { color:#6b7280; }
+    .grid { display:grid; grid-template-columns: repeat(2, minmax(0,1fr)); gap:16px; }
+    .log { height:240px; overflow:auto; font: 12px/1.4 Consolas, monospace; background:#0b1020; color:#c9d1d9; padding:12px; border-radius:8px; }
+    .badge { padding:2px 8px; border-radius:999px; font-size:12px; border:1px solid #e5e7eb; }
+    .ok { background:#dcfce7; border-color:#86efac; }
+    .err { background:#fee2e2; border-color:#fecaca; }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <h1>Vibra Scale RS232 (Node.js)</h1>
+    <div class="row">
+      <select id="port"></select>
+      <button id="refresh">Refresh Ports</button>
+      <button id="connect" class="primary">Connect</button>
+      <button id="disconnect" class="danger" disabled>Disconnect</button>
+      <button id="poll-start">Start Poll</button>
+      <button id="poll-stop">Stop Poll</button>
+      <button id="tare">Zero</button>
+      <button id="tare-clear">Clear Zero</button>
+      <span id="status" class="badge">Disconnected</span>
+    </div>
+  </div>
+
+  <div class="grid">
+    <div class="card">
+      <div class="muted">Realtime Weight</div>
+      <div class="weight"><span id="kg">0.000000</span> kg</div>
+      <div class="muted">Gross: <span id="gross">0.000000</span> kg</div>
+      <div class="muted">Stable: <span id="stable">-</span></div>
+      <div class="muted">Last update: <span id="ts">-</span></div>
+    </div>
+    <div class="card">
+      <div class="muted">Stats</div>
+      <div>Uptime: <span id="uptime">00:00:00</span></div>
+      <div>Data rate: <span id="rate">0/min</span></div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="muted">Log</div>
+    <div id="log" class="log"></div>
+  </div>
+
+  <script>
+    const el = (id) => document.getElementById(id);
+    const portSel = el('port');
+    const btnRefresh = el('refresh');
+    const btnConnect = el('connect');
+    const btnDisconnect = el('disconnect');
+    const statusBadge = el('status');
+    const kgEl = el('kg');
+    const stableEl = el('stable');
+    const tsEl = el('ts');
+    const logEl = el('log');
+    const uptimeEl = el('uptime');
+    const rateEl = el('rate');
+    const pollStartBtn = el('poll-start');
+    const pollStopBtn = el('poll-stop');
+    const tareBtn = el('tare');
+    const tareClearBtn = el('tare-clear');
+    const grossEl = el('gross');
+
+    let ws = null;
+    let start = 0;
+
+    function log(line, isErr = false) {
+      const d = document.createElement('div');
+      d.textContent = line;
+      if (isErr) d.style.color = '#fca5a5';
+      logEl.appendChild(d);
+      logEl.scrollTop = logEl.scrollHeight;
+    }
+
+    async function loadPorts() {
+      const r = await fetch('/api/ports');
+      const ports = await r.json();
+      portSel.innerHTML = '';
+      ports.forEach(p => {
+        const o = document.createElement('option');
+        o.value = p.path; o.textContent = (p.friendlyName || p.path);
+        portSel.appendChild(o);
+      });
+      if (!ports.length) {
+        const o = document.createElement('option');
+        o.value = ''; o.textContent = 'No ports found';
+        portSel.appendChild(o);
+      }
+    }
+
+    function setConnected(connected) {
+      statusBadge.textContent = connected ? 'Connected' : 'Disconnected';
+      statusBadge.className = 'badge ' + (connected ? 'ok' : '');
+      btnConnect.disabled = connected;
+      btnDisconnect.disabled = !connected;
+    }
+
+    async function connect() {
+      const path = portSel.value;
+      if (!path || path === 'No ports found') { alert('Select a valid port'); return; }
+      let r, text;
+      try {
+        r = await fetch('/api/connect', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ path }) });
+        text = await r.text();
+      } catch (e) {
+        alert('Network error: ' + e.message);
+        return;
+      }
+      let j = {};
+      try { j = JSON.parse(text); } catch (e) { /* fall through */ }
+      if (!r.ok || !j.ok) {
+        const msg = (j && j.error) || text || 'Unknown error';
+        console.error('Connect error response:', { status: r.status, body: text });
+        alert('Connect failed (' + r.status + '): ' + msg);
+        return;
+      }
+      setConnected(true);
+      start = Date.now();
+      setupWS();
+      log('Connected to ' + path);
+    }
+
+    async function disconnect() {
+      await fetch('/api/disconnect', { method: 'POST' });
+      if (ws) { ws.close(); ws = null; }
+      setConnected(false);
+      log('Disconnected');
+    }
+
+    function setupWS() {
+      if (ws) ws.close();
+      ws = new WebSocket((location.protocol === 'https:' ? 'wss://' : 'ws://') + location.host);
+      ws.onmessage = (ev) => {
+        const msg = JSON.parse(ev.data);
+        if (msg.type === 'weight') {
+          kgEl.textContent = Number(msg.kg).toFixed(6);
+          if (msg.grossKg != null) grossEl.textContent = Number(msg.grossKg).toFixed(6);
+          stableEl.textContent = msg.stable ? 'Yes' : 'No';
+          tsEl.textContent = new Date(msg.t).toLocaleTimeString();
+        } else if (msg.type === 'status') {
+          setConnected(!!msg.connected);
+        } else if (msg.type === 'error') {
+          log('Error: ' + msg.message, true);
+        }
+      };
+      ws.onopen = () => log('WS connected');
+      ws.onclose = () => log('WS disconnected');
+    }
+
+    function updateStatsLoop() {
+      const tick = async () => {
+        try {
+          const r = await fetch('/api/status');
+          const s = await r.json();
+          const up = s.uptimeMs || 0;
+          const h = Math.floor(up / 3600000);
+          const m = Math.floor((up % 3600000) / 60000);
+          const sec = Math.floor((up % 60000) / 1000);
+          uptimeEl.textContent = `${String(h).padStart(2,'0')}:${String(m).padStart(2,'0')}:${String(sec).padStart(2,'0')}`;
+          rateEl.textContent = (s.dataPerMin || 0) + '/min';
+        } catch {}
+        setTimeout(tick, 1000);
+      };
+      tick();
+    }
+
+    btnRefresh.addEventListener('click', loadPorts);
+    btnConnect.addEventListener('click', connect);
+    btnDisconnect.addEventListener('click', disconnect);
+    pollStartBtn.addEventListener('click', async () => {
+      try { await fetch('/api/poll/start', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ intervalMs: 200 }) }); } catch {}
+    });
+    pollStopBtn.addEventListener('click', async () => {
+      try { await fetch('/api/poll/stop', { method: 'POST' }); } catch {}
+    });
+    tareBtn.addEventListener('click', async () => {
+      try { await fetch('/api/tare', { method: 'POST' }); } catch {}
+    });
+    tareClearBtn.addEventListener('click', async () => {
+      try { await fetch('/api/tare/clear', { method: 'POST' }); } catch {}
+    });
+    loadPorts();
+    updateStatsLoop();
+  </script>
+</body>
+</html>
+
+<!DOCTYPE html>
+<html lang="id">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Vibra Scale Reader - Node.js</title>
+    <style>
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            margin: 0;
+            padding: 20px;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+        }
+        
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            background: white;
+            border-radius: 12px;
+            padding: 20px;
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.1);
+        }
+        
+        .header {
+            text-align: center;
+            margin-bottom: 30px;
+            color: #4a5568;
+        }
+        
+        .header h1 {
+            font-size: 2.5rem;
+            margin-bottom: 10px;
+        }
+        
+        .main-content {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 20px;
+        }
+        
+        .panel {
+            background: #f7fafc;
+            border-radius: 8px;
+            padding: 20px;
+            border: 1px solid #e2e8f0;
+        }
+        
+        .panel h2 {
+            color: #4a5568;
+            margin-bottom: 15px;
+            border-bottom: 2px solid #e2e8f0;
+            padding-bottom: 10px;
+        }
+        
+        .connection-controls {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 15px;
+        }
+        
+        .connection-controls select,
+        .connection-controls button {
+            padding: 8px 12px;
+            border: 1px solid #cbd5e0;
+            border-radius: 6px;
+            font-size: 14px;
+        }
+        
+        .connection-controls button {
+            background: #667eea;
+            color: white;
+            border: none;
+            cursor: pointer;
+        }
+        
+        .connection-controls button:hover {
+            background: #5a67d8;
+        }
+        
+        .connection-controls button:disabled {
+            background: #a0aec0;
+            cursor: not-allowed;
+        }
+        
+        .status {
+            padding: 10px;
+            border-radius: 6px;
+            margin-bottom: 15px;
+            font-weight: 600;
+        }
+        
+        .status.connected {
+            background: #c6f6d5;
+            color: #22543d;
+            border: 1px solid #9ae6b4;
+        }
+        
+        .status.disconnected {
+            background: #fed7d7;
+            color: #742a2a;
+            border: 1px solid #feb2b2;
+        }
+        
+        .weight-display {
+            text-align: center;
+            padding: 30px;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            border-radius: 12px;
+            color: white;
+            margin-bottom: 20px;
+        }
+        
+        .weight-number {
+            font-size: 3rem;
+            font-weight: bold;
+            font-family: 'Courier New', monospace;
+            margin-bottom: 10px;
+        }
+        
+        .weight-unit {
+            font-size: 1.5rem;
+            opacity: 0.9;
+        }
+        
+        .weight-info {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 15px;
+            margin-top: 20px;
+        }
+        
+        .info-item {
+            background: rgba(255, 255, 255, 0.1);
+            padding: 10px;
+            border-radius: 6px;
+            text-align: left;
+        }
+        
+        .info-item .label {
+            font-size: 0.9rem;
+            opacity: 0.8;
+        }
+        
+        .info-item .value {
+            font-size: 1.1rem;
+            font-weight: 600;
+            margin-top: 5px;
+        }
+        
+        .log-container {
+            height: 300px;
+            overflow-y: auto;
+            border: 1px solid #e2e8f0;
+            border-radius: 6px;
+            padding: 10px;
+            background: white;
+            font-family: 'Courier New', monospace;
+            font-size: 12px;
+        }
+        
+        .log-entry {
+            margin-bottom: 5px;
+            padding: 2px 0;
+        }
+        
+        .log-entry.stable {
+            color: #22543d;
+        }
+        
+        .log-entry.unstable {
+            color: #742a2a;
+        }
+        
+        .log-entry.error {
+            color: #742a2a;
+            font-weight: bold;
+        }
+        
+        .log-controls {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 15px;
+        }
+        
+        .log-controls button {
+            padding: 6px 12px;
+            border: 1px solid #cbd5e0;
+            border-radius: 4px;
+            background: white;
+            cursor: pointer;
+            font-size: 12px;
+        }
+        
+        .log-controls button:hover {
+            background: #f7fafc;
+        }
+        
+        .settings {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 15px;
+        }
+        
+        .setting-group {
+            display: flex;
+            flex-direction: column;
+            gap: 5px;
+        }
+        
+        .setting-group label {
+            font-weight: 600;
+            color: #4a5568;
+            font-size: 14px;
+        }
+        
+        .setting-group input,
+        .setting-group select {
+            padding: 6px 8px;
+            border: 1px solid #cbd5e0;
+            border-radius: 4px;
+            font-size: 14px;
+        }
+        
+        .status-bar {
+            display: flex;
+            justify-content: space-between;
+            margin-top: 20px;
+            padding: 15px;
+            background: #f7fafc;
+            border-radius: 6px;
+            border: 1px solid #e2e8f0;
+        }
+        
+        .status-item {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+        }
+        
+        .status-item .label {
+            font-size: 12px;
+            color: #4a5568;
+            font-weight: 600;
+        }
+        
+        .status-item .value {
+            font-size: 14px;
+            color: #2d3748;
+            font-family: 'Courier New', monospace;
+            margin-top: 2px;
+        }
+        
+        @media (max-width: 768px) {
+            .main-content {
+                grid-template-columns: 1fr;
+            }
+            
+            .connection-controls {
+                flex-direction: column;
+            }
+            
+            .settings {
+                grid-template-columns: 1fr;
+            }
+            
+            .status-bar {
+                flex-direction: column;
+                gap: 10px;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>Vibra Scale Reader</h1>
+            <p>Node.js RS232 Real-time Weight Reading</p>
+        </div>
+        
+        <div class="main-content">
+            <!-- Connection Panel -->
+            <div class="panel">
+                <h2>RS232 Connection</h2>
+                <div class="connection-controls">
+                    <select id="port-select">
+                        <option value="">Select COM Port...</option>
+                    </select>
+                    <button id="refresh-ports">Refresh</button>
+                    <button id="connect-btn">Connect</button>
+                    <button id="disconnect-btn" disabled>Disconnect</button>
+                </div>
+                <div id="connection-status" class="status disconnected">
+                    Status: Disconnected
+                </div>
+                <div class="settings">
+                    <div class="setting-group">
+                        <label>Decimal Places:</label>
+                        <input type="number" id="decimal-places" value="6" min="0" max="8">
+                    </div>
+                    <div class="setting-group">
+                        <label>Unit:</label>
+                        <select id="unit-select">
+                            <option value="kg">Kilogram (kg)</option>
+                            <option value="g">Gram (g)</option>
+                            <option value="lb">Pound (lb)</option>
+                        </select>
+                    </div>
+                </div>
+            </div>
+            
+            <!-- Weight Display Panel -->
+            <div class="panel">
+                <h2>Weight Display</h2>
+                <div class="weight-display">
+                    <div id="weight-value" class="weight-number">0.000000</div>
+                    <div id="weight-unit" class="weight-unit">kg</div>
+                    <div class="weight-info">
+                        <div class="info-item">
+                            <div class="label">Status:</div>
+                            <div id="weight-status" class="value">Stable</div>
+                        </div>
+                        <div class="info-item">
+                            <div class="label">Last Update:</div>
+                            <div id="last-update" class="value">-</div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            
+            <!-- Log Panel -->
+            <div class="panel" style="grid-column: 1 / -1;">
+                <h2>Data Log</h2>
+                <div class="log-controls">
+                    <button id="clear-log">Clear Log</button>
+                    <button id="export-log">Export CSV</button>
+                    <button id="apply-settings">Apply Settings</button>
+                </div>
+                <div id="log-container" class="log-container">
+                    <div class="log-entry">Waiting for data...</div>
+                </div>
+            </div>
+        </div>
+        
+        <!-- Status Bar -->
+        <div class="status-bar">
+            <div class="status-item">
+                <div class="label">Port</div>
+                <div id="current-port" class="value">-</div>
+            </div>
+            <div class="status-item">
+                <div class="label">Data Rate</div>
+                <div id="data-rate" class="value">0/min</div>
+            </div>
+            <div class="status-item">
+                <div class="label">Uptime</div>
+                <div id="uptime" class="value">00:00:00</div>
+            </div>
+            <div class="status-item">
+                <div class="label">Data Count</div>
+                <div id="data-count" class="value">0</div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        class VibraScaleClient {
+            constructor() {
+                this.isConnected = false;
+                this.startTime = null;
+                this.dataCount = 0;
+                this.lastWeight = 0;
+                
+                this.initializeElements();
+                this.setupEventListeners();
+                this.loadPorts();
+                this.startStatusUpdates();
+            }
+            
+            initializeElements() {
+                this.portSelect = document.getElementById('port-select');
+                this.refreshPortsBtn = document.getElementById('refresh-ports');
+                this.connectBtn = document.getElementById('connect-btn');
+                this.disconnectBtn = document.getElementById('disconnect-btn');
+                this.connectionStatus = document.getElementById('connection-status');
+                this.currentPortSpan = document.getElementById('current-port');
+                
+                this.weightValue = document.getElementById('weight-value');
+                this.weightUnit = document.getElementById('weight-unit');
+                this.weightStatus = document.getElementById('weight-status');
+                this.lastUpdateSpan = document.getElementById('last-update');
+                
+                this.logContainer = document.getElementById('log-container');
+                this.clearLogBtn = document.getElementById('clear-log');
+                this.exportLogBtn = document.getElementById('export-log');
+                this.applySettingsBtn = document.getElementById('apply-settings');
+                
+                this.decimalPlacesInput = document.getElementById('decimal-places');
+                this.unitSelect = document.getElementById('unit-select');
+                
+                this.dataRateSpan = document.getElementById('data-rate');
+                this.uptimeSpan = document.getElementById('uptime');
+                this.dataCountSpan = document.getElementById('data-count');
+            }
+            
+            setupEventListeners() {
+                this.refreshPortsBtn.addEventListener('click', () => this.loadPorts());
+                this.connectBtn.addEventListener('click', () => this.connect());
+                this.disconnectBtn.addEventListener('click', () => this.disconnect());
+                this.clearLogBtn.addEventListener('click', () => this.clearLog());
+                this.exportLogBtn.addEventListener('click', () => this.exportLog());
+                this.applySettingsBtn.addEventListener('click', () => this.applySettings());
+            }
+            
+            async loadPorts() {
+                try {
+                    const response = await fetch('/api/ports');
+                    const ports = await response.json();
+                    
+                    this.portSelect.innerHTML = '<option value="">Select COM Port...</option>';
+                    ports.forEach(port => {
+                        const option = document.createElement('option');
+                        option.value = port.path;
+                        option.textContent = `${port.path} (${port.manufacturer || 'Unknown'})`;
+                        this.portSelect.appendChild(option);
+                    });
+                } catch (error) {
+                    console.error('Error loading ports:', error);
+                }
+            }
+            
+            async connect() {
+                const port = this.portSelect.value;
+                if (!port) {
+                    alert('Please select a COM port');
+                    return;
+                }
+                
+                try {
+                    const response = await fetch('/api/connect', {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json'
+                        },
+                        body: JSON.stringify({ port })
+                    });
+                    
+                    const result = await response.json();
+                    if (result.success) {
+                        this.isConnected = true;
+                        this.startTime = Date.now();
+                        this.updateConnectionStatus(true);
+                        this.addLogEntry('CONNECT', `Connected to ${port}`);
+                    } else {
+                        alert(`Connection failed: ${result.message}`);
+                    }
+                } catch (error) {
+                    alert(`Connection error: ${error.message}`);
+                }
+            }
+            
+            async disconnect() {
+                try {
+                    const response = await fetch('/api/disconnect', {
+                        method: 'POST'
+                    });
+                    
+                    const result = await response.json();
+                    if (result.success) {
+                        this.isConnected = false;
+                        this.updateConnectionStatus(false);
+                        this.addLogEntry('DISCONNECT', 'Disconnected from scale');
+                    }
+                } catch (error) {
+                    console.error('Disconnect error:', error);
+                }
+            }
+            
+            updateConnectionStatus(connected) {
+                this.isConnected = connected;
+                if (connected) {
+                    this.connectionStatus.textContent = 'Status: Connected';
+                    this.connectionStatus.className = 'status connected';
+                    this.connectBtn.disabled = true;
+                    this.disconnectBtn.disabled = false;
+                    this.currentPortSpan.textContent = this.portSelect.value;
+                } else {
+                    this.connectionStatus.textContent = 'Status: Disconnected';
+                    this.connectionStatus.className = 'status disconnected';
+                    this.connectBtn.disabled = false;
+                    this.disconnectBtn.disabled = true;
+                    this.currentPortSpan.textContent = '-';
+                }
+            }
+            
+            addLogEntry(type, message) {
+                const timestamp = new Date().toLocaleTimeString();
+                const logEntry = document.createElement('div');
+                logEntry.className = `log-entry ${type.toLowerCase()}`;
+                logEntry.textContent = `[${timestamp}] ${type}: ${message}`;
+                
+                this.logContainer.appendChild(logEntry);
+                this.logContainer.scrollTop = this.logContainer.scrollHeight;
+                
+                // Keep only last 100 entries
+                const entries = this.logContainer.querySelectorAll('.log-entry');
+                if (entries.length > 100) {
+                    entries[0].remove();
+                }
+            }
+            
+            clearLog() {
+                this.logContainer.innerHTML = '<div class="log-entry">Log cleared...</div>';
+            }
+            
+            async exportLog() {
+                try {
+                    const response = await fetch('/api/export');
+                    const result = await response.json();
+                    
+                    if (result.success) {
+                        alert(`Data exported to ${result.filename}`);
+                    } else {
+                        alert(`Export failed: ${result.message}`);
+                    }
+                } catch (error) {
+                    alert(`Export error: ${error.message}`);
+                }
+            }
+            
+            applySettings() {
+                // Settings are applied on the server side
+                this.addLogEntry('SETTINGS', 'Settings applied');
+            }
+            
+            async startStatusUpdates() {
+                setInterval(async () => {
+                    if (this.isConnected) {
+                        try {
+                            const response = await fetch('/api/status');
+                            const status = await response.json();
+                            
+                            if (status.connected) {
+                                this.updateWeightDisplay(status.lastWeight);
+                                this.dataCount = status.dataCount;
+                                this.dataCountSpan.textContent = status.dataCount;
+                                
+                                if (status.uptime > 0) {
+                                    const hours = Math.floor(status.uptime / 3600000);
+                                    const minutes = Math.floor((status.uptime % 3600000) / 60000);
+                                    const seconds = Math.floor((status.uptime % 60000) / 1000);
+                                    this.uptimeSpan.textContent = `${hours.toString().padStart(2, '0')}:${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}`;
+                                }
+                                
+                                // Calculate data rate
+                                if (this.startTime) {
+                                    const elapsed = (Date.now() - this.startTime) / 60000; // minutes
+                                    const rate = Math.round(this.dataCount / elapsed);
+                                    this.dataRateSpan.textContent = `${rate}/min`;
+                                }
+                            }
+                        } catch (error) {
+                            console.error('Status update error:', error);
+                        }
+                    }
+                }, 1000);
+            }
+            
+            updateWeightDisplay(weight) {
+                if (weight !== undefined && weight !== this.lastWeight) {
+                    const decimalPlaces = parseInt(this.decimalPlacesInput.value);
+                    this.weightValue.textContent = weight.toFixed(decimalPlaces);
+                    this.weightUnit.textContent = this.unitSelect.value;
+                    this.lastUpdateSpan.textContent = new Date().toLocaleTimeString();
+                    this.lastWeight = weight;
+                }
+            }
+        }
+        
+        // Initialize the application
+        document.addEventListener('DOMContentLoaded', () => {
+            new VibraScaleClient();
+        });
+    </script>
+</body>
+</html>

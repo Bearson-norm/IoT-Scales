@@ -1,0 +1,23 @@
+{
+  "name": "iot-scales-v2",
+  "version": "1.7.0",
+  "description": "IoT Scales V2 - Manufacturing Weighing and Mixing Application",
+  "main": "server.js",
+  "scripts": [],
+  "bin": "server.js",
+  "pkg": {
+    "scripts": [
+      "server.js"
+    ],
+    "assets": [
+      "database/**/*",
+      "package.json"
+    ],
+    "targets": [
+      "node18-win-x64"
+    ],
+    "outputPath": "release"
+  },
+  "_comment_serialport": "Note: serialport is a native module and cannot be bundled into the executable. It will be copied to release/node_modules/ by build-package.js. The executable will resolve serialport from the external node_modules folder at runtime."
+}
+
