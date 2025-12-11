@@ -1,7 +1,9 @@
 import React, { useState, useRef } from 'react';
 import { Upload, FileText, AlertCircle, CheckCircle, Clock, Database, RefreshCw } from 'lucide-react';
+import { useAlert } from '../utils/alertModal';
 
 const DatabaseImport = () => {
+  const { alert } = useAlert();
   const [file, setFile] = useState(null);
   const [isUploading, setIsUploading] = useState(false);
   const [uploadProgress, setUploadProgress] = useState(0);
@@ -36,7 +38,7 @@ const DatabaseImport = () => {
     if (selectedFile && selectedFile.type === 'text/csv') {
       setFile(selectedFile);
     } else {
-      alert('Please select a valid CSV file');
+      alert.warning('Please select a valid CSV file', 'File Tidak Valid');
     }
   };
 
@@ -61,11 +63,11 @@ const DatabaseImport = () => {
         setShowPreview(true);
       } else {
         const error = await response.json();
-        alert(`Preview failed: ${error.message}`);
+        alert.error(`Preview failed: ${error.message}`, 'Preview Gagal');
       }
     } catch (error) {
       console.error('Preview error:', error);
-      alert('Preview failed. Please try again.');
+      alert.error('Preview failed. Please try again.', 'Error');
     } finally {
       setIsPreviewLoading(false);
     }
@@ -116,14 +118,14 @@ const DatabaseImport = () => {
         // Trigger stats refresh for database page
         window.dispatchEvent(new CustomEvent('database_updated'));
         
-        alert('Database imported successfully!');
+        alert.success('Database imported successfully!', 'Import Berhasil');
       } else {
         const error = await response.json();
-        alert(`Import failed: ${error.message}`);
+        alert.error(`Import failed: ${error.message}`, 'Import Gagal');
       }
     } catch (error) {
       console.error('Upload error:', error);
-      alert('Upload failed. Please try again.');
+      alert.error('Upload failed. Please try again.', 'Error');
     } finally {
       setIsUploading(false);
       setUploadProgress(0);

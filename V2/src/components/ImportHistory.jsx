@@ -1,8 +1,10 @@
 import React, { useState, useEffect } from 'react'
 import { History, Download, Filter, Search, Clock, CheckCircle, XCircle, AlertCircle, Server, FileText, Database } from 'lucide-react'
 import api from '../services/api'
+import { useAlert } from '../utils/alertModal'
 
 const ImportHistory = () => {
+  const { alert } = useAlert()
   const [importLogs, setImportLogs] = useState([])
   const [filteredLogs, setFilteredLogs] = useState([])
   const [searchTerm, setSearchTerm] = useState('')
@@ -154,7 +156,7 @@ const ImportHistory = () => {
 
   const handleExportHistory = () => {
     // Export functionality would be implemented here
-    alert('Export functionality will be implemented')
+    alert.info('Export functionality will be implemented', 'Coming Soon')
   }
 
   const paginatedLogs = filteredLogs.slice(

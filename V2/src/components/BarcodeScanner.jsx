@@ -85,29 +85,6 @@ const BarcodeScanner = ({ type, onScan, onClose }) => {
     }
   }
 
-  // Simulate barcode detection (in real app, use a barcode scanning library)
-  const simulateBarcodeDetection = () => {
-    const mockData = {
-      mo: 'PROD/MO/25739',
-      sku: 'SKU001',
-      quantity: '99000.0',
-      ingredient: 'RMLIQ00131'
-    }
-    
-    setTimeout(() => {
-      if (isScanning) {
-        setScannedData(mockData[type] || 'MOCK_DATA')
-        handleSubmit()
-      }
-    }, 2000)
-  }
-
-  useEffect(() => {
-    if (isScanning) {
-      simulateBarcodeDetection()
-    }
-  }, [isScanning])
-
   useEffect(() => {
     return () => {
       stopCamera()

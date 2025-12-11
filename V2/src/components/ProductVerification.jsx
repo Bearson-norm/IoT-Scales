@@ -16,18 +16,51 @@ const ProductVerification = ({ ingredient, onVerify, onClose }) => {
 
     setIsVerifying(true)
     
-    // Simulate verification process
-    setTimeout(() => {
-      const isValid = scannedCode.trim() === (ingredient.code || ingredient.id)
-      setVerificationResult(isValid)
-      setIsVerifying(false)
-      
-      if (isValid) {
-        setTimeout(() => {
-          onVerify(true)
-        }, 1000)
-      }
-    }, 1500)
+    // Parse scanned code format: nama_ingredients-dd/mm/yyyy
+    // Example: "STRAWBERRY-30/08/2027" or "SALTNIC A6H1007-15/12/2025"
+    const scannedValue = scannedCode.trim()
+    
+    // Check if format contains date (has -dd/mm/yyyy pattern)
+    const datePattern = /-(\d{2}\/\d{2}\/\d{4})$/
+    const dateMatch = scannedValue.match(datePattern)
+    
+    let extractedExpDate = null
+    let ingredientNameFromScan = scannedValue
+    
+    if (dateMatch) {
+      // Extract exp date and ingredient name
+      extractedExpDate = dateMatch[1] // e.g., "30/08/2027"
+      ingredientNameFromScan = scannedValue.substring(0, dateMatch.index) // Everything before the date
+    }
+    
+    // Verify: Check if ingredient name matches (case-insensitive, allow spaces/underscores)
+    const normalizeName = (name) => {
+      return name.toLowerCase()
+        .replace(/\s+/g, ' ') // Normalize spaces
+        .replace(/_/g, ' ')   // Replace underscores with spaces
+        .trim()
+    }
+    
+    const scannedNameNormalized = normalizeName(ingredientNameFromScan)
+    const ingredientNameNormalized = normalizeName(ingredient.name || ingredient.product_name || '')
+    
+    // Also check code if name doesn't match
+    const ingredientCode = ingredient.code || ingredient.id || ''
+    const codeMatch = scannedValue === ingredientCode || scannedNameNormalized === normalizeName(ingredientCode)
+    
+    const nameMatch = scannedNameNormalized === ingredientNameNormalized
+    
+    const isValid = nameMatch || codeMatch
+    
+    setVerificationResult(isValid)
+    setIsVerifying(false)
+    
+    if (isValid) {
+      // Pass verification result with exp date
+      setTimeout(() => {
+        onVerify(true, extractedExpDate) // Pass exp date to callback
+      }, 1000)
+    }
   }
 
   const handleKeyPress = (e) => {
@@ -103,11 +136,14 @@ const ProductVerification = ({ ingredient, onVerify, onClose }) => {
 
           <div className="form-group">
             <label className="form-label">Scan Product Code</label>
+            <div style={{ marginBottom: '8px', fontSize: '12px', color: '#6b7280' }}>
+              Format: nama_ingredients-dd/mm/yyyy (contoh: STRAWBERRY-30/08/2027)
+            </div>
             <div style={{ position: 'relative' }}>
               <input
                 type="text"
                 className="form-input"
-                placeholder="Product Code"
+                placeholder="Product Code atau nama-dd/mm/yyyy"
                 value={scannedCode}
                 onChange={handleScan}
                 onKeyPress={handleKeyPress}

@@ -40,10 +40,45 @@ try {
     path.join(releaseDir, 'server.exe'),
     path.join(releaseDir, 'prisma-form-pro.exe')
   ];
-  oldFiles.forEach(file => {
-    if (fs.existsSync(file)) {
-      fs.unlinkSync(file);
+  
+  // Helper function to delete file with retries
+  const deleteFileWithRetry = (filePath, maxRetries = 3) => {
+    for (let i = 0; i < maxRetries; i++) {
+      try {
+        if (fs.existsSync(filePath)) {
+          // On Windows, try to remove read-only attribute first
+          if (process.platform === 'win32') {
+            try {
+              fs.chmodSync(filePath, 0o666);
+            } catch (e) {
+              // Ignore chmod errors
+            }
+          }
+          fs.unlinkSync(filePath);
+          console.log(`   ✅ Deleted old executable: ${path.basename(filePath)}`);
+          return true;
+        }
+      } catch (error) {
+        if (i < maxRetries - 1) {
+          console.log(`   ⚠️  File locked, retrying... (${i + 1}/${maxRetries})`);
+          // Wait 1 second before retry
+          const start = Date.now();
+          while (Date.now() - start < 1000) {
+            // Busy wait
+          }
+        } else {
+          console.warn(`   ⚠️  Warning: Could not delete ${path.basename(filePath)} - ${error.message}`);
+          console.warn(`      The file may be in use. Please close the application and try again.`);
+          return false;
+        }
+      }
     }
+    return false;
+  };
+  
+  console.log('   Cleaning up old executables...');
+  oldFiles.forEach(file => {
+    deleteFileWithRetry(file);
   });
   
   // Build executable directly with output name (using -o for output)

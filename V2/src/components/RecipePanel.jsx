@@ -15,26 +15,82 @@ const RecipePanel = ({ workOrder, recipe, onIngredientClick, onStartScan, onStar
   const statusCounts = getStatusCounts()
 
   const getProgressPercentage = (ingredient) => {
-    if (ingredient.targetWeight === 0) return 0
-    // Use totalWeight (savedWeight + currentWeight) or fallback to currentWeight
-    const totalWeight = ingredient.totalWeight || (ingredient.savedWeight || 0) + (ingredient.currentWeight || 0)
-    return Math.min((totalWeight / ingredient.targetWeight) * 100, 100)
+    if (!ingredient || ingredient.targetWeight === 0) return 0
+    
+    // Progress bar: Always show savedWeight + currentWeight (total accumulated)
+    // This ensures progress bar reflects real-time weighing progress
+    // CRITICAL: Use parseFloat to ensure numeric calculation, not string concatenation
+    const savedWeight = parseFloat(ingredient.savedWeight || 0) || 0
+    const currentWeight = parseFloat(ingredient.currentWeight || 0) || 0
+    const totalWeight = savedWeight + currentWeight  // Always calculate from saved + current
+    
+    // Calculate percentage, ensure it doesn't exceed 100%
+    const progressPercent = ingredient.targetWeight > 0 
+      ? Math.min((totalWeight / ingredient.targetWeight) * 100, 100)
+      : 0
+    
+    return progressPercent
   }
 
   const getIngredientStatus = (ingredient) => {
-    const progress = getProgressPercentage(ingredient)
-    if (progress >= 100) return 'completed'
-    if (ingredient.status === 'weighing') return 'active'
-    // If has saved weight, consider it as in progress
-    if ((ingredient.savedWeight || 0) > 0) return 'active'
-    return 'pending'
-  }
-  
-  const getDisplayWeight = (ingredient) => {
-    // Display total weight (saved + current) for better visibility
+    // PRIORITY 1: Use status from backend/database (most accurate)
+    // Backend already determines 'completed' status based on tolerance range
+    if (ingredient.status === 'completed') {
+      return 'completed'
+    }
+    
+    // PRIORITY 2: Check if within tolerance range (if tolerance values are available)
+    // This handles cases where status might not be updated yet but weight is within tolerance
     const savedWeight = ingredient.savedWeight || 0
     const currentWeight = ingredient.currentWeight || 0
     const totalWeight = ingredient.totalWeight || (savedWeight + currentWeight)
+    const targetWeight = ingredient.targetWeight || 0
+    
+    // Get tolerance values (from ingredient or calculate default ±3g)
+    const toleranceMin = ingredient.toleranceMin !== undefined && ingredient.toleranceMin !== null
+      ? parseFloat(ingredient.toleranceMin)
+      : Math.max(0, targetWeight - 3)
+    const toleranceMax = ingredient.toleranceMax !== undefined && ingredient.toleranceMax !== null
+      ? parseFloat(ingredient.toleranceMax)
+      : targetWeight + 3
+    
+    // Check if within tolerance range
+    if (targetWeight > 0 && totalWeight >= toleranceMin && totalWeight <= toleranceMax) {
+      return 'completed'
+    }
+    
+    // PRIORITY 3: Status from backend
+    if (ingredient.status === 'weighing') return 'active'
+    
+    // PRIORITY 4: If has saved weight, consider it as in progress
+    if (savedWeight > 0) return 'active'
+    
+    // Default: pending
+    return 'pending'
+  }
+  
+  // Debug: Log recipe changes to verify updates
+  React.useEffect(() => {
+    if (recipe.length > 0) {
+      recipe.forEach(ing => {
+        if (ing.savedWeight > 0) {
+          console.log(`📋 RecipePanel received recipe update for ${ing.name}:`, {
+            savedWeight: ing.savedWeight,
+            targetWeight: ing.targetWeight,
+            currentWeight: ing.currentWeight,
+            totalWeight: ing.totalWeight
+          })
+        }
+      })
+    }
+  }, [recipe])
+  
+  const getDisplayWeight = (ingredient) => {
+    // Display total weight (savedWeight + currentWeight) to match progress bar
+    // This ensures weight display matches the progress bar calculation
+    const savedWeight = parseFloat(ingredient.savedWeight || 0) || 0
+    const currentWeight = parseFloat(ingredient.currentWeight || 0) || 0
+    const totalWeight = savedWeight + currentWeight  // Match progress bar calculation
     return totalWeight
   }
 
@@ -99,13 +155,34 @@ const RecipePanel = ({ workOrder, recipe, onIngredientClick, onStartScan, onStar
             </div>
           </div>
         ) : (
+          // Display recipe in import order (no sorting - preserve original order from backend)
           recipe.map((ingredient, index) => {
             const status = getIngredientStatus(ingredient)
             const progress = getProgressPercentage(ingredient)
+            const displayWeight = getDisplayWeight(ingredient)
+            
+            // CRITICAL: Use stable, unique key based on ingredient.id (not position-based)
+            // This ensures React correctly identifies and updates the right ingredient
+            // Adding savedWeight and currentWeight to key ensures re-render when weight changes
+            // But primary key is still ingredient.id to maintain component identity
+            const uniqueKey = `${ingredient.id || ingredient.code || index}-${ingredient.savedWeight || 0}-${ingredient.currentWeight || 0}`
+            
+            // Debug: Log when ingredient has currentWeight to track which one is being updated
+            if (ingredient.currentWeight > 0) {
+              console.log(`📊 RecipePanel rendering ingredient with currentWeight:`, {
+                name: ingredient.name,
+                id: ingredient.id,
+                code: ingredient.code,
+                currentWeight: ingredient.currentWeight,
+                savedWeight: ingredient.savedWeight,
+                progress: progress.toFixed(1) + '%',
+                key: uniqueKey
+              })
+            }
             
             return (
               <div
-                key={ingredient.id}
+                key={uniqueKey}
                 className={`ingredient-card ${status}`}
                 onClick={() => onIngredientClick(ingredient)}
               >
@@ -121,18 +198,9 @@ const RecipePanel = ({ workOrder, recipe, onIngredientClick, onStartScan, onStar
                 
                 <div className="ingredient-weight">
                   <span className="weight-text">
-                    {getDisplayWeight(ingredient).toFixed(1)} / {ingredient.targetWeight.toFixed(1)} g
+                    {displayWeight.toFixed(1)} / {ingredient.targetWeight.toFixed(1)} g
                   </span>
-                  {(ingredient.savedWeight || 0) > 0 && (
-                    <span className="saved-weight-indicator" style={{ 
-                      fontSize: '10px', 
-                      color: '#6b7280', 
-                      display: 'block',
-                      marginTop: '2px'
-                    }}>
-                      (Saved: {(ingredient.savedWeight || 0).toFixed(1)}g)
-                    </span>
-                  )}
+                  {/* Removed saved-weight-indicator since we're already showing saved weight in the main display */}
                 </div>
                 
                 <div className="progress-bar">

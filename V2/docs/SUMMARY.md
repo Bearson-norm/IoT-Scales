@@ -149,3 +149,30 @@ Folder `docs/` berisi **26 file dokumentasi** yang mencakup setup, fitur, troubl
 **Total Documentation Files**: 26
 **Version**: 1.7.0
 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

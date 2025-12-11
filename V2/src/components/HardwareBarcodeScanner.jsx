@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect } from 'react'
+import React, { useState, useEffect } from 'react'
 import { QrCode, X, Camera, AlertCircle, CheckCircle } from 'lucide-react'
 
 const HardwareBarcodeScanner = ({ type, onScan, onClose }) => {
@@ -7,9 +7,6 @@ const HardwareBarcodeScanner = ({ type, onScan, onClose }) => {
   const [error, setError] = useState('')
   const [isConnected, setIsConnected] = useState(false)
   const [scannerStatus, setScannerStatus] = useState('disconnected')
-  const videoRef = useRef(null)
-  const streamRef = useRef(null)
-  const scannerRef = useRef(null)
 
   const getScanTitle = () => {
     switch (type) {
@@ -46,19 +43,10 @@ const HardwareBarcodeScanner = ({ type, onScan, onClose }) => {
     try {
       setError('')
       setScannerStatus('connecting')
-      
-      // Simulate connection delay
-      await new Promise(resolve => setTimeout(resolve, 2000))
-      
-      // Simulate successful connection
+      // Dummy delay to show status change, without injecting mock data
+      await new Promise(resolve => setTimeout(resolve, 500))
       setIsConnected(true)
-      setScannerStatus('connected')
-      
-      // Simulate scanner ready
-      setTimeout(() => {
-        setScannerStatus('ready')
-      }, 1000)
-      
+      setScannerStatus('ready')
     } catch (err) {
       setError('Gagal terhubung dengan scanner kassen. Pastikan scanner terhubung dan driver terinstall.')
       setScannerStatus('error')
@@ -69,10 +57,6 @@ const HardwareBarcodeScanner = ({ type, onScan, onClose }) => {
   const disconnectScanner = () => {
     setIsConnected(false)
     setScannerStatus('disconnected')
-    if (streamRef.current) {
-      streamRef.current.getTracks().forEach(track => track.stop())
-      streamRef.current = null
-    }
   }
 
   const startScanning = async () => {
@@ -84,12 +68,7 @@ const HardwareBarcodeScanner = ({ type, onScan, onClose }) => {
     try {
       setError('')
       setIsScanning(true)
-      setScannerStatus('scanning')
-      
-      // Simulate kassen scanner data reception
-      // In real implementation, this would listen to scanner events
-      simulateKassenScan()
-      
+      setScannerStatus('ready')
     } catch (err) {
       setError('Gagal memulai scanning. Periksa koneksi scanner.')
       setIsScanning(false)
@@ -102,30 +81,6 @@ const HardwareBarcodeScanner = ({ type, onScan, onClose }) => {
     setScannerStatus('ready')
   }
 
-  // Simulate kassen scanner data reception
-  const simulateKassenScan = () => {
-    const mockData = {
-      mo: 'PROD/MO/25739',
-      sku: 'SKU001',
-      quantity: '99000.0',
-      ingredient: 'RMLIQ00131'
-    }
-    
-    // Simulate scanning delay
-    setTimeout(() => {
-      if (isScanning) {
-        const scannedCode = mockData[type] || 'MOCK_DATA'
-        setScannedData(scannedCode)
-        setScannerStatus('success')
-        
-        // Auto submit after successful scan
-        setTimeout(() => {
-          onScan(type, scannedCode)
-        }, 1000)
-      }
-    }, 3000)
-  }
-
   const handleManualInput = (e) => {
     setScannedData(e.target.value)
   }
@@ -134,6 +89,8 @@ const HardwareBarcodeScanner = ({ type, onScan, onClose }) => {
     if (scannedData.trim()) {
       onScan(type, scannedData.trim())
       setScannedData('')
+      setScannerStatus('success')
+      setIsScanning(false)
     }
   }
 

@@ -1,0 +1,23 @@
+{
+  "name": "iot-scales-rs232-reader",
+  "version": "1.0.0",
+  "description": "Node.js program untuk membaca data timbangan via RS232",
+  "main": "scaleReader.js",
+  "scripts": {
+    "start": "node scaleReader.js",
+    "dev": "node scaleReader.js"
+  },
+  "keywords": [
+    "rs232",
+    "serial",
+    "weighing-scale",
+    "iot"
+  ],
+  "author": "",
+  "license": "MIT",
+  "dependencies": {
+    "serialport": "^12.0.0",
+    "@serialport/parser-readline": "^12.0.0"
+  }
+}
+

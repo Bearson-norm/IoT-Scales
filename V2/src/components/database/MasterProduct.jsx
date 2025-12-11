@@ -4,8 +4,10 @@ import FormulaImportModal from '../FormulaImportModal'
 import importLogger from '../../utils/importLogger.js'
 import serverDatabaseConfig from '../../utils/serverDatabaseConfig.js'
 import apiService from '../../services/api.js'
+import { useAlert } from '../../utils/alertModal'
 
 const MasterProduct = () => {
+  const { alert } = useAlert()
   const [products, setProducts] = useState([])
   const [filteredProducts, setFilteredProducts] = useState([])
   const [searchTerm, setSearchTerm] = useState('')
@@ -281,7 +283,7 @@ const MasterProduct = () => {
   // Handle import from server database
   const handleServerImport = async () => {
     if (!selectedServerConfig) {
-      alert('Please select a server configuration')
+      alert.warning('Please select a server configuration', 'Peringatan')
       return
     }
 
@@ -295,7 +297,7 @@ const MasterProduct = () => {
       )
 
       if (!logId) {
-        alert('Failed to start import logging')
+        alert.error('Failed to start import logging', 'Error')
         return
       }
 
@@ -321,7 +323,7 @@ const MasterProduct = () => {
         await importLogger.completeImport(logId, true)
 
         setImportProgress({ logId, status: 'completed', progress: 100 })
-        alert(`Import completed successfully! ${importResult.records_imported} records imported.`)
+        alert.success(`Import completed successfully! ${importResult.records_imported} records imported.`, 'Import Berhasil')
         
         // Refresh products list
         setProducts([...products, ...generateMockProducts(importResult.records_imported)])
@@ -329,11 +331,11 @@ const MasterProduct = () => {
         // Complete import logging with failure
         await importLogger.completeImport(logId, false)
         setImportProgress({ logId, status: 'failed', progress: 0 })
-        alert(`Import failed: ${importResult.error}`)
+        alert.error(`Import failed: ${importResult.error}`, 'Import Gagal')
       }
     } catch (error) {
       console.error('Error during server import:', error)
-      alert('Import failed: ' + error.message)
+      alert.error('Import failed: ' + error.message, 'Error')
     } finally {
       setShowServerImportModal(false)
       setSelectedServerConfig('')

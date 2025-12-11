@@ -13,7 +13,8 @@ const Login = ({ onLogin }) => {
     { username: 'faliq', password: '123456', name: 'Faliq', role: 'Operator' },
     { username: 'admin', password: 'admin123', name: 'Administrator', role: 'Admin' },
     { username: 'operator1', password: 'op123', name: 'Operator 1', role: 'Operator' },
-    { username: 'supervisor', password: 'sup123', name: 'Supervisor', role: 'Supervisor' }
+    { username: 'supervisor', password: 'sup123', name: 'Supervisor', role: 'Supervisor' },
+    { username: 'qc', password: 'qc123', name: 'QC Officer', role: 'QC' }
   ]
 
   const handleSubmit = async (e) => {
@@ -32,11 +33,6 @@ const Login = ({ onLogin }) => {
         setIsLoading(false)
       }
     }, 1500)
-  }
-
-  const handleDemoLogin = (demoUser) => {
-    setUsername(demoUser.username)
-    setPassword(demoUser.password)
   }
 
   return (
@@ -116,22 +112,6 @@ const Login = ({ onLogin }) => {
             )}
           </button>
         </form>
-
-        <div className="demo-section">
-          <h3>Demo Accounts</h3>
-          <div className="demo-buttons">
-            {mockUsers.map((user, index) => (
-              <button
-                key={index}
-                className="demo-button"
-                onClick={() => handleDemoLogin(user)}
-                disabled={isLoading}
-              >
-                {user.name}
-              </button>
-            ))}
-          </div>
-        </div>
 
         <div className="login-footer">
           <p>v1.7.0 - PRESISITECH</p>

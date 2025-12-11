@@ -1,16 +1,24 @@
 @echo off
+setlocal enabledelayedexpansion
+cls
 echo ========================================
 echo Building IoT Scales V2 Package
 echo ========================================
 echo.
+
+REM Trap errors
+set "ERROR_OCCURRED=0"
+
+REM Ensure we're in the correct directory
+cd /d "%~dp0"
 
 REM Check if Node.js is installed
 where node >nul 2>&1
 if %errorlevel% neq 0 (
     echo ERROR: Node.js is not installed or not in PATH
     echo Please install Node.js from https://nodejs.org/
-    pause
-    exit /b 1
+    set "ERROR_OCCURRED=1"
+    goto :END
 )
 
 REM Step 1: Build frontend
@@ -18,8 +26,8 @@ echo [1/5] Building React frontend...
 call npm run build
 if errorlevel 1 (
     echo ERROR: Frontend build failed!
-    pause
-    exit /b 1
+    set "ERROR_OCCURRED=1"
+    goto :END
 )
 echo ✅ Frontend build complete
 echo.
@@ -32,8 +40,8 @@ if %errorlevel% neq 0 (
     call npm install -g pkg
     if errorlevel 1 (
         echo ERROR: Failed to install pkg
-        pause
-        exit /b 1
+        set "ERROR_OCCURRED=1"
+        goto :END
     )
 )
 echo ✅ pkg is available
@@ -43,17 +51,64 @@ REM Step 3: Build executable
 echo [3/5] Building executable...
 
 REM Clean up old executables to avoid conflicts
-if exist "release\iot-scales-v2.exe" del /F /Q "release\iot-scales-v2.exe"
-if exist "release\server.exe" del /F /Q "release\server.exe"
-if exist "release\prisma-form-pro.exe" del /F /Q "release\prisma-form-pro.exe"
+echo   Checking for running processes...
+REM Try to close any running instances first
+tasklist /FI "IMAGENAME eq iot-scales-v2.exe" 2>nul | find /I /N "iot-scales-v2.exe">nul
+if "%ERRORLEVEL%"=="0" (
+    echo   ⚠️  Found running instance, attempting to close...
+    taskkill /F /IM "iot-scales-v2.exe" >nul 2>&1
+    timeout /t 2 /nobreak >nul
+)
+
+REM Also check for node processes that might be running the server
+tasklist /FI "IMAGENAME eq node.exe" 2>nul | find /I /N "node.exe">nul
+if "%ERRORLEVEL%"=="0" (
+    echo   ⚠️  Warning: Node.js processes detected. Make sure server is not running.
+)
+
+REM Wait a moment before deleting
+timeout /t 1 /nobreak >nul
+
+REM Try to delete old executables with retries
+echo   Cleaning up old executables...
+if exist "release\iot-scales-v2.exe" (
+    REM Try delete with retries
+    set "RETRY_COUNT=0"
+    :DELETE_RETRY_1
+    del /F /Q "release\iot-scales-v2.exe" 2>nul
+    if exist "release\iot-scales-v2.exe" (
+        set /a RETRY_COUNT+=1
+        if !RETRY_COUNT! LSS 3 (
+            echo   ⚠️  File locked, retrying... (!RETRY_COUNT!/3)
+            timeout /t 2 /nobreak >nul
+            goto DELETE_RETRY_1
+        ) else (
+            echo   ❌ Error: Could not delete old executable (may be in use)
+            echo   Please close iot-scales-v2.exe if it's running, then try again.
+            set "ERROR_OCCURRED=1"
+            goto :END
+        )
+    ) else (
+        echo   ✅ Deleted old iot-scales-v2.exe
+    )
+)
+
+if exist "release\server.exe" (
+    del /F /Q "release\server.exe" 2>nul
+    if not exist "release\server.exe" echo   ✅ Deleted old server.exe
+)
+if exist "release\prisma-form-pro.exe" (
+    del /F /Q "release\prisma-form-pro.exe" 2>nul
+    if not exist "release\prisma-form-pro.exe" echo   ✅ Deleted old prisma-form-pro.exe
+)
 
 REM Build executable directly with output name (using -o for output)
 if not exist "release" mkdir "release"
 call pkg server.js --targets node18-win-x64 -o release\iot-scales-v2.exe
 if errorlevel 1 (
     echo ERROR: Packaging failed!
-    pause
-    exit /b 1
+    set "ERROR_OCCURRED=1"
+    goto :END
 )
 
 REM Verify executable was created
@@ -192,12 +247,12 @@ echo.
 
 REM Step 6: Verify serialport installation
 echo [6/6] Verifying serialport installation...
-set VERIFY_OK=1
+set "VERIFY_OK=1"
 
 REM Check serialport module exists
 if not exist "release\node_modules\serialport" (
     echo   ❌ serialport module not found
-    set VERIFY_OK=0
+    set "VERIFY_OK=0"
 ) else (
     echo   ✅ serialport module found
 )
@@ -205,7 +260,7 @@ if not exist "release\node_modules\serialport" (
 REM Check @serialport scoped packages
 if not exist "release\node_modules\@serialport" (
     echo   ❌ @serialport packages not found
-    set VERIFY_OK=0
+    set "VERIFY_OK=0"
 ) else (
     echo   ✅ @serialport packages found
 )
@@ -228,7 +283,7 @@ echo 📁 Release files are in: release\
 echo 📄 Executable: release\iot-scales-v2.exe
 echo 📄 Run script: release\run.bat
 echo.
-if %VERIFY_OK%==1 (
+if "!VERIFY_OK!"=="1" (
     echo ✅ Serialport module verified - ready for standalone use!
 ) else (
     echo ⚠️  Warning: Serialport verification had issues
@@ -241,5 +296,25 @@ echo   2. Or use run.bat: cd release ^&^& run.bat
 echo   3. Build installer (optional): iscc installer.iss
 echo   4. Test serialport functionality by connecting to a COM port
 echo.
-pause
+
+:END
+if "%ERROR_OCCURRED%"=="1" (
+    echo.
+    echo ========================================
+    echo ❌ Build failed with errors!
+    echo ========================================
+    echo.
+    echo Please check the error messages above.
+    echo.
+    pause
+    exit /b 1
+) else (
+    echo.
+    echo ========================================
+    echo ✅ Build completed successfully!
+    echo ========================================
+    echo.
+    pause
+    exit /b 0
+)
 

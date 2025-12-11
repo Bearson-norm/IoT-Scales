@@ -1,8 +1,10 @@
 import React, { useState, useEffect } from 'react'
 import { Server, Plus, Edit, Trash2, TestTube, Eye, EyeOff, Save, X } from 'lucide-react'
 import serverDatabaseConfig from '../utils/serverDatabaseConfig.js'
+import { useAlert } from '../utils/alertModal'
 
 const ServerDatabaseConfig = () => {
+  const { alert } = useAlert()
   const [configurations, setConfigurations] = useState([])
   const [showAddModal, setShowAddModal] = useState(false)
   const [showEditModal, setShowEditModal] = useState(false)
@@ -63,13 +65,13 @@ const ServerDatabaseConfig = () => {
         loadConfigurations()
         setShowAddModal(false)
         setNewConfig(serverDatabaseConfig.getDefaultConfiguration())
-        alert('Configuration saved successfully!')
+        alert.success('Configuration saved successfully!', 'Berhasil')
       } else {
-        alert('Failed to save configuration')
+        alert.error('Failed to save configuration', 'Error')
       }
     } catch (error) {
       console.error('Error saving configuration:', error)
-      alert('Error saving configuration: ' + error.message)
+      alert.error('Error saving configuration: ' + error.message, 'Error')
     }
   }
 
@@ -84,31 +86,35 @@ const ServerDatabaseConfig = () => {
         loadConfigurations()
         setShowEditModal(false)
         setEditingConfig(null)
-        alert('Configuration updated successfully!')
+        alert.success('Configuration updated successfully!', 'Berhasil')
       } else {
-        alert('Failed to update configuration')
+        alert.error('Failed to update configuration', 'Error')
       }
     } catch (error) {
       console.error('Error updating configuration:', error)
-      alert('Error updating configuration: ' + error.message)
+      alert.error('Error updating configuration: ' + error.message, 'Error')
     }
   }
 
   const handleDeleteConfig = async (id) => {
-    if (window.confirm('Are you sure you want to delete this configuration?')) {
-      try {
-        const deleted = await serverDatabaseConfig.deleteConfiguration(id)
-        if (deleted) {
-          loadConfigurations()
-          alert('Configuration deleted successfully!')
-        } else {
-          alert('Failed to delete configuration')
+    alert.confirm(
+      'Are you sure you want to delete this configuration?',
+      'Konfirmasi Hapus',
+      async () => {
+        try {
+          const deleted = await serverDatabaseConfig.deleteConfiguration(id)
+          if (deleted) {
+            loadConfigurations()
+            alert.success('Configuration deleted successfully!', 'Berhasil')
+          } else {
+            alert.error('Failed to delete configuration', 'Error')
+          }
+        } catch (error) {
+          console.error('Error deleting configuration:', error)
+          alert.error('Error deleting configuration: ' + error.message, 'Error')
         }
-      } catch (error) {
-        console.error('Error deleting configuration:', error)
-        alert('Error deleting configuration: ' + error.message)
       }
-    }
+    )
   }
 
   const handleTestConnection = async () => {

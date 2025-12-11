@@ -38,6 +38,28 @@ const MOScanModal = ({ isOpen, onClose, onStartWeighing }) => {
           const wo = data.data.workOrder
           const ingredients = data.data.ingredients || []
           
+          // Check if work order status is 'reject'
+          if (wo.status === 'reject') {
+            // Check if it has been reactivated by QC
+            const isReactivated = wo.qc_reactivated_at !== null && wo.qc_reactivated_at !== undefined
+            
+            if (!isReactivated) {
+              // MO is rejected and not yet reactivated by QC - block resume
+              setExistingWorkOrder({
+                workOrder: wo,
+                ingredients: ingredients,
+                isRejected: true,
+                isReactivated: false,
+                hasProgress: false // Set to false to prevent resume
+              })
+              console.log(`🚫 Found rejected work order ${moNumber} that requires QC approval`)
+              return
+            } else {
+              // MO is rejected but has been reactivated by QC - allow resume
+              console.log(`✅ Found rejected work order ${moNumber} that has been reactivated by QC`)
+            }
+          }
+          
           // Check if there's any progress (ingredients with saved weight > 0 or status != 'pending')
           const hasProgress = ingredients.some(ing => {
             const actualMass = parseFloat(ing.actual_mass || 0) || 0
@@ -64,7 +86,9 @@ const MOScanModal = ({ isOpen, onClose, onStartWeighing }) => {
               totalIngredients,
               completedIngredients,
               inProgressIngredients,
-              hasProgress: true
+              hasProgress: true,
+              isRejected: wo.status === 'reject',
+              isReactivated: wo.qc_reactivated_at !== null && wo.qc_reactivated_at !== undefined
             })
             console.log(`📋 Found existing work order ${moNumber} with progress: ${completedIngredients}/${totalIngredients} completed, ${inProgressIngredients} in progress`)
           } else {
@@ -111,18 +135,33 @@ const MOScanModal = ({ isOpen, onClose, onStartWeighing }) => {
     e.preventDefault()
     setError('')
     
+    // Check if MO is rejected and not reactivated by QC
+    if (existingWorkOrder && existingWorkOrder.isRejected && !existingWorkOrder.isReactivated) {
+      setError('MO ini telah ditolak (REJECT) karena melebihi toleransi. Mohon minta persetujuan QC terlebih dahulu sebelum melanjutkan proses penimbangan. Silakan hubungi QC Officer untuk melakukan approval.')
+      return
+    }
+    
     // If existing work order found, resume directly
     if (existingWorkOrder && existingWorkOrder.hasProgress) {
       const wo = existingWorkOrder.workOrder
       const ings = existingWorkOrder.ingredients
       
       // Resume with existing data - preserve all fields from database
+      // Note: target_mass in database is already scaled, no need to scale again
+      const savedQuantity = parseFloat(wo.planned_quantity || quantity || 1000)
+      const baseQuantity = 1000
+      const scalingFactor = savedQuantity / baseQuantity
+      
+      console.log(`📋 Resume with scaling: Quantity=${savedQuantity}g, Factor=${scalingFactor}x`)
+      
       const moData = {
         moNumber,
         skuName: wo.formulation_name || skuInput || 'Unknown',
         quantity: String(wo.planned_quantity || quantity || '1'),
         formulationId: wo.formulation_id,
         formulationCode: wo.formulation_code || skuInput || 'Unknown',
+        baseQuantity, // Store base quantity for reference
+        scalingFactor, // Store scaling factor for reference
         ingredients: ings.map(it => ({
           ingredient_id: it.ingredient_id, // Primary ID from database
           formulation_ingredient_id: it.ingredient_id, // Alias for compatibility
@@ -183,18 +222,37 @@ const MOScanModal = ({ isOpen, onClose, onStartWeighing }) => {
         list[0]
 
       const ingredientsResp = await api.getFormulationIngredients(best.id)
+      
+      // Calculate scaling factor based on quantity
+      // Formula in database is for 1000g base, so scale proportionally
+      const baseQuantity = 1000 // gram (base formula)
+      const targetQuantity = parseFloat(quantity) || 1000
+      const scalingFactor = targetQuantity / baseQuantity
+      
+      console.log(`📏 Scaling formula: Base=${baseQuantity}g, Target=${targetQuantity}g, Factor=${scalingFactor}x`)
+      
       const moData = {
         moNumber,
         skuName: best.formulation_name || best.product_name || best.name || skuInput,
         quantity,
         formulationId: best.id,
         formulationCode: best.formulation_code || best.product_code || best.code || skuInput,
-        ingredients: ((ingredientsResp && ingredientsResp.data) || ingredientsResp || []).map(it => ({
-          formulation_ingredient_id: it.id || it.ingredient_id,
-          product_code: it.product_code || it.ingredient_code || it.code,
-          product_name: it.product_name || it.ingredient_name || it.name,
-          target_mass: it.target_mass || it.mass || it.target || 0
-        })),
+        baseQuantity, // Store base quantity for reference
+        scalingFactor, // Store scaling factor for reference
+        ingredients: ((ingredientsResp && ingredientsResp.data) || ingredientsResp || []).map(it => {
+          const baseTargetMass = it.target_mass || it.mass || it.target || 0
+          const scaledTargetMass = baseTargetMass * scalingFactor
+          
+          console.log(`  📦 ${it.product_name || it.ingredient_name || it.name}: ${baseTargetMass}g × ${scalingFactor} = ${scaledTargetMass.toFixed(2)}g`)
+          
+          return {
+            formulation_ingredient_id: it.id || it.ingredient_id,
+            product_code: it.product_code || it.ingredient_code || it.code,
+            product_name: it.product_name || it.ingredient_name || it.name,
+            target_mass: scaledTargetMass, // Use scaled target mass
+            base_target_mass: baseTargetMass // Keep original for reference
+          }
+        }),
         isResume: false
       }
       onStartWeighing(moData)
@@ -225,6 +283,34 @@ const MOScanModal = ({ isOpen, onClose, onStartWeighing }) => {
             />
           </div>
           
+          {/* Show rejected MO warning if found */}
+          {existingWorkOrder && existingWorkOrder.isRejected && !existingWorkOrder.isReactivated && (
+            <div style={{ 
+              padding: '12px', 
+              marginBottom: '12px', 
+              backgroundColor: '#fef2f2', 
+              border: '1px solid #dc2626',
+              borderRadius: '8px',
+              borderLeft: '4px solid #dc2626'
+            }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '8px' }}>
+                <span style={{ fontSize: '16px' }}>🚫</span>
+                <strong style={{ color: '#991b1b', fontSize: '14px' }}>MO Ditolak (REJECT) - Persetujuan QC Diperlukan</strong>
+              </div>
+              <div style={{ fontSize: '12px', color: '#991b1b', marginLeft: '24px' }}>
+                <div style={{ marginBottom: '6px' }}>
+                  MO ini telah ditolak karena melebihi toleransi penimbangan.
+                </div>
+                <div style={{ fontWeight: '600', marginBottom: '4px' }}>
+                  ⚠️ Tidak dapat melanjutkan tanpa persetujuan QC Officer.
+                </div>
+                <div style={{ fontSize: '11px', color: '#7f1d1d', marginTop: '8px', padding: '6px', backgroundColor: '#fee2e2', borderRadius: '4px' }}>
+                  Silakan hubungi QC Officer untuk melakukan approval dan reactivate MO ini terlebih dahulu.
+                </div>
+              </div>
+            </div>
+          )}
+          
           {/* Show existing work order info if found */}
           {existingWorkOrder && existingWorkOrder.hasProgress && (
             <div style={{ 
@@ -242,6 +328,11 @@ const MOScanModal = ({ isOpen, onClose, onStartWeighing }) => {
               <div style={{ fontSize: '12px', color: '#1e40af', marginLeft: '24px' }}>
                 <div>Progress: {existingWorkOrder.completedIngredients}/{existingWorkOrder.totalIngredients} bahan selesai</div>
                 <div>In Progress: {existingWorkOrder.inProgressIngredients} bahan sedang ditimbang</div>
+                {existingWorkOrder.isReactivated && (
+                  <div style={{ marginTop: '6px', padding: '4px 8px', backgroundColor: '#dcfce7', borderRadius: '4px', color: '#166534', fontSize: '11px', fontWeight: '600' }}>
+                    ✅ Telah di-approve oleh QC Officer
+                  </div>
+                )}
                 <div style={{ marginTop: '6px', fontWeight: '600' }}>
                   Klik "Mulai Penimbangan" untuk melanjutkan dari progress sebelumnya
                 </div>
@@ -256,8 +347,22 @@ const MOScanModal = ({ isOpen, onClose, onStartWeighing }) => {
             </div>
           </div>
           <div className="form-row" style={{ display: 'grid', gap: 6, marginBottom: 12 }}>
-            <label>Quantity</label>
-            <input type="number" step="0.01" value={quantity} onChange={e => setQuantity(e.target.value)} placeholder="Qty order" />
+            <label>Quantity (gram) <span style={{ fontSize: '11px', color: '#666', fontWeight: 'normal' }}>- Formula base: 1000g</span></label>
+            <input 
+              type="number" 
+              step="0.01" 
+              value={quantity} 
+              onChange={e => setQuantity(e.target.value)} 
+              placeholder="Contoh: 2000 untuk 2x lipat" 
+            />
+            {quantity && parseFloat(quantity) > 0 && (
+              <div style={{ fontSize: '11px', color: '#059669', marginTop: '4px', padding: '6px 8px', backgroundColor: '#d1fae5', borderRadius: '4px' }}>
+                📏 Scaling Factor: <strong>{(parseFloat(quantity) / 1000).toFixed(2)}x</strong> 
+                {parseFloat(quantity) === 1000 && ' (base formula)'}
+                {parseFloat(quantity) === 2000 && ' (2x lipat)'}
+                {parseFloat(quantity) === 500 && ' (½ lipat)'}
+              </div>
+            )}
           </div>
 
           {loading && <div className="info-subtext">Memuat...</div>}
@@ -267,7 +372,13 @@ const MOScanModal = ({ isOpen, onClose, onStartWeighing }) => {
 
           <div className="modal-footer" style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 4 }}>
             <button type="button" className="btn" onClick={onClose}>Batal</button>
-            <button type="submit" className="btn btn-primary" disabled={loading}>Mulai Penimbangan</button>
+            <button 
+              type="submit" 
+              className="btn btn-primary" 
+              disabled={loading || (existingWorkOrder && existingWorkOrder.isRejected && !existingWorkOrder.isReactivated)}
+            >
+              Mulai Penimbangan
+            </button>
           </div>
         </form>
       </div>
