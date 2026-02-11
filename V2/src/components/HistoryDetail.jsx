@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react'
 import api from '../services/api'
-import { ArrowLeft, Printer, Clock, Package, Scale, CheckCircle, AlertCircle, Calendar, FileText, List, RotateCcw, X } from 'lucide-react'
+import { ArrowLeft, Printer, Clock, Package, Scale, CheckCircle, AlertCircle, Calendar, FileText, List, RotateCcw, X, Send } from 'lucide-react'
 import { useAlert } from '../utils/alertModal'
 
 const HistoryDetail = ({ moNumber, onBack, currentUser }) => {
@@ -20,6 +20,7 @@ const HistoryDetail = ({ moNumber, onBack, currentUser }) => {
   const [reactivateNote, setReactivateNote] = useState('')
   const [isReactivating, setIsReactivating] = useState(false)
   const [printingSessions, setPrintingSessions] = useState(new Set()) // Track which sessions are being printed
+  const [sendingData, setSendingData] = useState(false) // Track if data is being sent
   
   // Check if user is QC
   const isQC = currentUser && (currentUser.role === 'QC' || currentUser.role === 'qc')
@@ -140,7 +141,7 @@ const HistoryDetail = ({ moNumber, onBack, currentUser }) => {
                 <td style="padding: 8px; border-bottom: 1px solid #e5e7eb; color: #6b7280;">${expIdx === 0 ? (ingredient.ingredient_code || '-') : ''}</td>
                 <td style="padding: 8px; border-bottom: 1px solid #e5e7eb; text-align: left;">${expDate}</td>
                 <td style="padding: 8px; border-bottom: 1px solid #e5e7eb; text-align: right; color: #6b7280;">${expIdx === 0 ? (minWeight !== null ? minWeight.toFixed(2) : '-') : ''}</td>
-                <td style="padding: 8px; border-bottom: 1px solid #e5e7eb; text-align: right;">${expIdx === 0 ? scaledWeight.toFixed(2) : ''}</td>
+                <td style="padding: 8px; border-bottom: 1px solid #e5e7eb; text-align: right;">${scaledWeight.toFixed(2)}</td>
                 <td style="padding: 8px; border-bottom: 1px solid #e5e7eb; text-align: right; color: #6b7280;">${expIdx === 0 ? (maxWeight !== null ? maxWeight.toFixed(2) : '-') : ''}</td>
                 <td style="padding: 8px; border-bottom: 1px solid #e5e7eb; text-align: right; color: #059669; font-weight: 600;">${actualWeight > 0 ? actualWeight.toFixed(2) : ''}</td>
                 <td style="padding: 8px; border-bottom: 1px solid #e5e7eb; text-align: right; color: #059669; font-weight: 600;">${expIdx === 0 ? totalWeight.toFixed(2) : ''}</td>
@@ -447,7 +448,7 @@ const HistoryDetail = ({ moNumber, onBack, currentUser }) => {
         ingredientName: ingredient.ingredient_name || 'N/A',
         currentWeight: session.actual_mass || 0,
         sessionNumber: session.session_number || 1,
-        operatorName: workOrder.operator_name || 'Operator',
+        operatorName: currentUser?.name || currentUser?.username || workOrder.operator_name || 'Operator',
         moNumber: workOrder.work_order || null,
         expDate: ingredient.exp_date || null,
         sessionTime: sessionTime // Pass session time to use in print instead of current time
@@ -577,6 +578,54 @@ const HistoryDetail = ({ moNumber, onBack, currentUser }) => {
     }
   }
 
+  const handleSendData = async () => {
+    if (!historyDetail || !historyDetail.workOrder) {
+      alert.error('Data history tidak tersedia', 'Error')
+      return
+    }
+    
+    setSendingData(true)
+    
+    try {
+      // Load API reporting config from localStorage
+      const apiReportingConfig = localStorage.getItem('apiReportingConfig')
+      if (!apiReportingConfig) {
+        throw new Error('Konfigurasi API Reporting belum diatur. Silakan atur di Settings > API Reporting')
+      }
+      
+      const config = JSON.parse(apiReportingConfig)
+      if (!config.apiReportingEnabled) {
+        throw new Error('API Reporting belum diaktifkan. Silakan aktifkan di Settings > API Reporting')
+      }
+      
+      // Send data to external API via server endpoint
+      const sendResponse = await fetch('/api/weighing/send-to-external', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          workOrder: historyDetail.workOrder,
+          ingredients: historyDetail.ingredients,
+          apiConfig: config
+        }),
+      })
+      
+      const sendResult = await sendResponse.json()
+      
+      if (sendResult.success) {
+        alert.success(`Data penimbangan untuk MO ${historyDetail.workOrder.work_order} berhasil dikirim ke API eksternal!\n\nURL: ${sendResult.url || 'N/A'}`, 'Berhasil Dikirim')
+      } else {
+        throw new Error(sendResult.error || 'Failed to send data to external API')
+      }
+    } catch (error) {
+      console.error('Error sending data:', error)
+      alert.error(`Gagal mengirim data: ${error.message}`, 'Error')
+    } finally {
+      setSendingData(false)
+    }
+  }
+
   if (loading) {
     return (
       <div className="history-detail-page" style={{ padding: '20px' }}>
@@ -690,6 +739,28 @@ const HistoryDetail = ({ moNumber, onBack, currentUser }) => {
               Aktifkan Kembali
             </button>
           )}
+          <button 
+            onClick={handleSendData}
+            disabled={sendingData}
+            style={{ 
+              padding: '8px 16px',
+              borderRadius: '6px',
+              border: '1px solid #8b5cf6',
+              backgroundColor: sendingData ? '#9ca3af' : '#8b5cf6',
+              color: '#fff',
+              cursor: sendingData ? 'not-allowed' : 'pointer',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '8px',
+              fontSize: '14px',
+              fontWeight: '500',
+              opacity: sendingData ? 0.6 : 1
+            }}
+            title="Kirim data penimbangan ke website"
+          >
+            <Send size={16} />
+            {sendingData ? 'Mengirim...' : 'Kirim Data'}
+          </button>
           <button 
             onClick={handlePrint}
             style={{ 
@@ -989,6 +1060,50 @@ const HistoryDetail = ({ moNumber, onBack, currentUser }) => {
               </div>
             </div>
 
+            {/* Expired Dates */}
+            {ingredient.exp_dates && ingredient.exp_dates.length > 0 && (
+              <div style={{
+                backgroundColor: '#fff',
+                border: '1px solid #e5e7eb',
+                borderRadius: '8px',
+                padding: '16px',
+                marginBottom: '20px'
+              }}>
+                <div style={{ fontSize: '14px', fontWeight: '600', color: '#1f2937', marginBottom: '12px' }}>
+                  Expired Dates
+                </div>
+                <div style={{ display: 'grid', gap: '8px' }}>
+                  {ingredient.exp_dates.map((expData, expIdx) => {
+                    const expDate = typeof expData === 'string' ? expData : expData.exp_date;
+                    const actualWeight = typeof expData === 'object' && expData.actual_weight !== undefined
+                      ? parseFloat(expData.actual_weight || 0)
+                      : 0;
+                    return (
+                      <div 
+                        key={expIdx}
+                        style={{
+                          display: 'flex',
+                          justifyContent: 'space-between',
+                          alignItems: 'center',
+                          padding: '8px 12px',
+                          backgroundColor: '#f9fafb',
+                          borderRadius: '6px',
+                          border: '1px solid #e5e7eb'
+                        }}
+                      >
+                        <div style={{ fontSize: '13px', color: '#1f2937', fontWeight: '500' }}>
+                          {expDate || '-'}
+                        </div>
+                        <div style={{ fontSize: '13px', color: '#059669', fontWeight: '600' }}>
+                          {actualWeight > 0 ? actualWeight.toFixed(2) + ' g' : '-'}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+
             {/* Weighing Sessions */}
             <div>
               <div style={{ fontSize: '14px', fontWeight: '600', color: '#1f2937', marginBottom: '12px' }}>
@@ -1093,6 +1208,14 @@ const HistoryDetail = ({ moNumber, onBack, currentUser }) => {
                           <div style={{ fontSize: '11px', color: '#6b7280', marginBottom: '2px' }}>Toleransi</div>
                           <div style={{ fontSize: '14px', fontWeight: '600', color: '#1f2937' }}>
                             {session.tolerance_min.toFixed(1)} - {session.tolerance_max.toFixed(1)} g
+                          </div>
+                        </div>
+                      )}
+                      {session.exp_date && (
+                        <div>
+                          <div style={{ fontSize: '11px', color: '#6b7280', marginBottom: '2px' }}>Exp Date</div>
+                          <div style={{ fontSize: '14px', fontWeight: '600', color: '#1f2937' }}>
+                            {session.exp_date}
                           </div>
                         </div>
                       )}
@@ -1325,7 +1448,7 @@ const HistoryDetail = ({ moNumber, onBack, currentUser }) => {
                             {expIdx === 0 ? (minWeight !== null ? minWeight.toFixed(2) : '-') : ''}
                           </td>
                           <td style={{ padding: '12px', textAlign: 'right', color: '#1f2937' }}>
-                            {expIdx === 0 ? scaledWeight.toFixed(2) : ''}
+                            {scaledWeight.toFixed(2)}
                           </td>
                           <td style={{ padding: '12px', textAlign: 'right', color: '#6b7280' }}>
                             {expIdx === 0 ? (maxWeight !== null ? maxWeight.toFixed(2) : '-') : ''}

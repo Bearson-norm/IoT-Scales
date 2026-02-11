@@ -360,6 +360,7 @@ const Settings = () => {
     
     // Printer Settings
     printMethod: 'windows-raw', // 'windows-raw', 'network-tcp', 'serial-com'
+    printerFormat: 'ZPL', // 'ZPL' or 'ESC-POS'
     printerPort: 'Xprinter XP-420B',
     printerIP: '192.168.1.100',
     networkPort: 9100,
@@ -376,7 +377,17 @@ const Settings = () => {
     // Label Size Settings (legacy compatibility)
     labelWidthLegacy: BASE_DEFAULT_LABEL_TEMPLATE.width,
     labelHeightLegacy: BASE_DEFAULT_LABEL_TEMPLATE.height,
-    labelDPILegacy: BASE_DEFAULT_LABEL_TEMPLATE.dpi
+    labelDPILegacy: BASE_DEFAULT_LABEL_TEMPLATE.dpi,
+    
+    // API Reporting Settings
+    apiReportingEnabled: false,
+    apiReportingUrl: 'https://api.example.com/weighing-data',
+    apiReportingEndpoint: '/api/weighing-data',
+    apiReportingMethod: 'POST',
+    apiReportingHeaders: JSON.stringify({
+      'Content-Type': 'application/json',
+      'Authorization': 'Bearer YOUR_TOKEN_HERE'
+    }, null, 2)
   })
 
   const [isSaving, setIsSaving] = useState(false)
@@ -474,6 +485,7 @@ const Settings = () => {
         setSettings(prev => ({
           ...prev,
           printMethod: config.printMethod || prev.printMethod,
+          printerFormat: config.printerFormat || prev.printerFormat || 'ZPL',
           printerPort: config.printerPort || prev.printerPort,
           printerIP: config.printerIP || prev.printerIP,
           networkPort: config.networkPort || prev.networkPort,
@@ -545,11 +557,39 @@ const Settings = () => {
         }
       })
       .catch(e => console.error('Failed to load printer config from server:', e))
+    
+    // Load API reporting config from localStorage
+    const loadAPIReportingConfig = () => {
+      try {
+        const savedAPIReportingConfig = localStorage.getItem('apiReportingConfig')
+        if (savedAPIReportingConfig) {
+          const config = JSON.parse(savedAPIReportingConfig)
+          setSettings(prev => ({
+            ...prev,
+            apiReportingEnabled: config.apiReportingEnabled !== undefined ? config.apiReportingEnabled : prev.apiReportingEnabled,
+            apiReportingUrl: config.apiReportingUrl || prev.apiReportingUrl,
+            apiReportingEndpoint: config.apiReportingEndpoint || prev.apiReportingEndpoint,
+            apiReportingMethod: config.apiReportingMethod || prev.apiReportingMethod,
+            apiReportingHeaders: config.apiReportingHeaders || prev.apiReportingHeaders
+          }))
+        }
+      } catch (e) {
+        console.error('Failed to load API reporting config from localStorage:', e)
+      }
+    }
+    loadAPIReportingConfig()
+    
+    // Listen for API reporting config updates
+    const handleAPIReportingConfigUpdated = () => {
+      loadAPIReportingConfig()
+    }
+    window.addEventListener('apiReportingConfigUpdated', handleAPIReportingConfigUpdated)
 
     return () => {
       window.removeEventListener('storage', handlePrinterConfigChange)
       window.removeEventListener('printerConfigUpdated', handlePrinterConfigUpdated)
       window.removeEventListener('autoSaveConfigUpdated', handleAutoSaveConfigUpdated)
+      window.removeEventListener('apiReportingConfigUpdated', handleAPIReportingConfigUpdated)
     }
   }, [])
 
@@ -707,6 +747,7 @@ const Settings = () => {
       const activeTemplate = normalizedTemplates.find(t => t.id === settings.activeLabelTemplateId) || normalizedTemplates[0] || cloneDefaultLabelTemplate()
       const printerConfig = {
         printMethod: settings.printMethod,
+        printerFormat: settings.printerFormat || 'ZPL',
         printerPort: settings.printerPort,
         printerIP: settings.printerIP,
         networkPort: settings.networkPort,
@@ -734,6 +775,20 @@ const Settings = () => {
       localStorage.setItem('autoSaveConfig', JSON.stringify(autoSaveConfig))
       // Dispatch custom event to notify App.jsx
       window.dispatchEvent(new Event('autoSaveConfigUpdated'))
+    }
+    
+    // Save API reporting config to localStorage
+    if (activeTab === 'api-reporting' || true) { // Always save API reporting config
+      const apiReportingConfig = {
+        apiReportingEnabled: settings.apiReportingEnabled,
+        apiReportingUrl: settings.apiReportingUrl,
+        apiReportingEndpoint: settings.apiReportingEndpoint,
+        apiReportingMethod: settings.apiReportingMethod,
+        apiReportingHeaders: settings.apiReportingHeaders
+      }
+      localStorage.setItem('apiReportingConfig', JSON.stringify(apiReportingConfig))
+      // Dispatch custom event to notify other components
+      window.dispatchEvent(new Event('apiReportingConfigUpdated'))
     }
     setSaveMessage('')
     
@@ -809,7 +864,8 @@ const Settings = () => {
     { id: 'database', label: 'Database', icon: Database },
     { id: 'server-database', label: 'Server Database', icon: Server },
     { id: 'user', label: 'Pengguna', icon: User },
-    { id: 'notifications', label: 'Notifikasi', icon: Bell }
+    { id: 'notifications', label: 'Notifikasi', icon: Bell },
+    { id: 'api-reporting', label: 'API Reporting', icon: Server }
   ]
 
   const renderGeneralSettings = () => (
@@ -1370,6 +1426,141 @@ const Settings = () => {
     </div>
   )
 
+  const renderAPIReportingSettings = () => (
+    <div className="settings-section">
+      <h3>Pengaturan API Reporting</h3>
+      <div style={{ marginBottom: '20px', padding: '15px', backgroundColor: '#e3f2fd', borderRadius: '8px', border: '1px solid #90caf9' }}>
+        <h4 style={{ marginTop: 0, marginBottom: '10px', fontSize: '14px', fontWeight: '600' }}>
+          Konfigurasi API untuk Mengirim Data Hasil Penimbangan
+        </h4>
+        <p style={{ margin: 0, fontSize: '13px', color: '#555' }}>
+          Konfigurasi ini digunakan untuk mengirim data hasil penimbangan ke website eksternal menggunakan POST API. Format data kompatibel dengan Postman untuk testing.
+        </p>
+      </div>
+      
+      <div className="settings-grid">
+        <div className="form-group" style={{ gridColumn: '1 / -1' }}>
+          <label className="form-label" style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+            <input
+              type="checkbox"
+              checked={settings.apiReportingEnabled}
+              onChange={(e) => handleSettingChange('api-reporting', 'apiReportingEnabled', e.target.checked)}
+              style={{ width: '18px', height: '18px', cursor: 'pointer' }}
+            />
+            <span>Aktifkan API Reporting</span>
+          </label>
+          <p style={{ fontSize: '12px', color: '#6b7280', marginTop: '4px', marginLeft: '26px' }}>
+            Aktifkan untuk mengirim data hasil penimbangan ke API eksternal
+          </p>
+        </div>
+        
+        {settings.apiReportingEnabled && (
+          <>
+            <div className="form-group" style={{ gridColumn: '1 / -1' }}>
+              <label className="form-label">URL API Base</label>
+              <input
+                type="text"
+                className="form-input"
+                value={settings.apiReportingUrl}
+                onChange={(e) => handleSettingChange('api-reporting', 'apiReportingUrl', e.target.value)}
+                placeholder="https://api.example.com"
+              />
+              <p style={{ fontSize: '11px', color: '#6b7280', marginTop: '4px' }}>
+                Base URL dari API website (tanpa endpoint, contoh: https://api.example.com)
+              </p>
+            </div>
+            
+            <div className="form-group">
+              <label className="form-label">Endpoint</label>
+              <input
+                type="text"
+                className="form-input"
+                value={settings.apiReportingEndpoint}
+                onChange={(e) => handleSettingChange('api-reporting', 'apiReportingEndpoint', e.target.value)}
+                placeholder="/api/weighing-data"
+              />
+              <p style={{ fontSize: '11px', color: '#6b7280', marginTop: '4px' }}>
+                Path endpoint API (contoh: /api/weighing-data)
+              </p>
+            </div>
+            
+            <div className="form-group">
+              <label className="form-label">Method HTTP</label>
+              <select
+                className="form-input"
+                value={settings.apiReportingMethod}
+                onChange={(e) => handleSettingChange('api-reporting', 'apiReportingMethod', e.target.value)}
+              >
+                <option value="POST">POST</option>
+                <option value="PUT">PUT</option>
+                <option value="PATCH">PATCH</option>
+              </select>
+              <p style={{ fontSize: '11px', color: '#6b7280', marginTop: '4px' }}>
+                Method HTTP untuk mengirim data (disarankan POST)
+              </p>
+            </div>
+            
+            <div className="form-group" style={{ gridColumn: '1 / -1' }}>
+              <label className="form-label">Headers (JSON)</label>
+              <textarea
+                className="form-input"
+                value={settings.apiReportingHeaders}
+                onChange={(e) => handleSettingChange('api-reporting', 'apiReportingHeaders', e.target.value)}
+                placeholder='{"Content-Type": "application/json", "Authorization": "Bearer YOUR_TOKEN"}'
+                style={{ minHeight: '120px', fontFamily: 'monospace', fontSize: '12px' }}
+              />
+              <p style={{ fontSize: '11px', color: '#6b7280', marginTop: '4px' }}>
+                Header HTTP dalam format JSON (contoh: Authorization, API Key, dll)
+              </p>
+            </div>
+            
+            <div style={{ gridColumn: '1 / -1', padding: '15px', backgroundColor: '#fff3cd', borderRadius: '8px', border: '1px solid #ffc107', marginTop: '10px' }}>
+              <h4 style={{ marginTop: 0, marginBottom: '10px', fontSize: '14px', fontWeight: '600', color: '#856404' }}>
+                📋 Format Data yang Dikirim
+              </h4>
+              <p style={{ fontSize: '12px', color: '#856404', marginBottom: '8px' }}>
+                Data yang dikirim akan berformat JSON dengan struktur berikut:
+              </p>
+              <pre style={{ 
+                fontSize: '11px', 
+                backgroundColor: '#fff', 
+                padding: '10px', 
+                borderRadius: '4px', 
+                overflow: 'auto',
+                border: '1px solid #ddd',
+                maxHeight: '300px'
+              }}>
+{`{
+  "work_order": "MO-2024-001",
+  "sku": "SKU-001",
+  "formulation_name": "Formula Name",
+  "production_date": "2024-01-01T00:00:00Z",
+  "planned_quantity": 1000.0,
+  "status": "completed",
+  "operator_name": "Operator Name",
+  "end_time": "2024-01-01T12:00:00Z",
+  "ingredients": [
+    {
+      "ingredient_id": 1,
+      "ingredient_code": "ING-001",
+      "ingredient_name": "Ingredient Name",
+      "target_mass": 100.0,
+      "current_accumulated_mass": 100.5,
+      "current_status": "completed",
+      "tolerance_min": 95.0,
+      "tolerance_max": 105.0,
+      "sessions": [...]
+    }
+  ]
+}`}
+              </pre>
+            </div>
+          </>
+        )}
+      </div>
+    </div>
+  )
+
   const renderTabContent = () => {
     switch (activeTab) {
       case 'general':
@@ -1386,6 +1577,8 @@ const Settings = () => {
         return renderNotificationSettings()
       case 'printer':
         return renderPrinterSettings()
+      case 'api-reporting':
+        return renderAPIReportingSettings()
       default:
         return renderGeneralSettings()
     }
@@ -1473,14 +1666,34 @@ const Settings = () => {
       <div className="settings-section">
         <h3>Pengaturan Printer Thermal Label</h3>
         <div style={{ marginBottom: '20px', padding: '15px', backgroundColor: '#e3f2fd', borderRadius: '8px', border: '1px solid #90caf9' }}>
-          <h4 style={{ marginTop: 0, marginBottom: '10px', fontSize: '14px', fontWeight: '600' }}>Format ZPL</h4>
+          <h4 style={{ marginTop: 0, marginBottom: '10px', fontSize: '14px', fontWeight: '600' }}>
+            {settings.printerFormat === 'ZPL' ? 'Format ZPL' : 'Format ESC/POS'}
+          </h4>
           <p style={{ margin: 0, fontSize: '13px', color: '#555' }}>
-            Printer thermal label menggunakan format ZPL (Zebra Programming Language). 
-            Label size: 100mm x 72mm, DPI: 203. Mendukung text, barcode Code 128, QR code, dan boxes.
+            {settings.printerFormat === 'ZPL' 
+              ? 'Printer thermal label menggunakan format ZPL (Zebra Programming Language). Label size: 100mm x 72mm, DPI: 203. Mendukung text, barcode Code 128, QR code, dan boxes.'
+              : 'Printer thermal menggunakan format ESC/POS (Epson Standard Code for Point of Sale). Format ini kompatibel dengan printer thermal receipt dan label printer seperti DLP 50, Epson, dan printer ESC/POS lainnya.'}
           </p>
         </div>
         
         <div className="settings-grid">
+          <div className="form-group">
+            <label className="form-label">Format Print</label>
+            <select
+              className="form-input"
+              value={settings.printerFormat || 'ZPL'}
+              onChange={(e) => handleSettingChange('printer', 'printerFormat', e.target.value)}
+            >
+              <option value="ZPL">ZPL (Zebra Programming Language)</option>
+              <option value="ESC-POS">ESC/POS (Epson Standard Code)</option>
+            </select>
+            <small style={{ display: 'block', marginTop: '5px', color: '#666', fontSize: '12px' }}>
+              {settings.printerFormat === 'ZPL' 
+                ? 'Format untuk printer thermal label (Zebra, Xprinter, TSC, dll)'
+                : 'Format untuk printer thermal receipt/label ESC/POS (DLP 50, Epson, dll)'}
+            </small>
+          </div>
+
           <div className="form-group">
             <label className="form-label">Metode Koneksi</label>
             <div style={{ display: 'flex', gap: '10px', alignItems: 'flex-start' }}>
@@ -1531,6 +1744,7 @@ const Settings = () => {
                         const activeTemplate = normalizedTemplates.find(t => t.id === updatedSettings.activeLabelTemplateId) || normalizedTemplates[0] || cloneDefaultLabelTemplate();
                         const printerConfig = {
                           printMethod: updatedSettings.printMethod,
+                          printerFormat: updatedSettings.printerFormat || 'ZPL',
                           printerPort: updatedSettings.printerPort,
                           printerIP: updatedSettings.printerIP,
                           networkPort: updatedSettings.networkPort,
@@ -1610,9 +1824,9 @@ const Settings = () => {
               </button>
             </div>
             <small style={{ display: 'block', marginTop: '5px', color: '#666', fontSize: '12px' }}>
-              {settings.printMethod === 'windows-raw' && 'Menggunakan Windows Print API untuk mengirim RAW data ke printer queue'}
-              {settings.printMethod === 'network-tcp' && 'Mengirim ZPL langsung ke printer via TCP socket (port 9100)'}
-              {settings.printMethod === 'serial-com' && 'Mengirim ZPL via serial port (USB/RS232)'}
+              {settings.printMethod === 'windows-raw' && `Menggunakan Windows Print API untuk mengirim RAW data ke printer queue (${settings.printerFormat || 'ZPL'})`}
+              {settings.printMethod === 'network-tcp' && `Mengirim ${settings.printerFormat || 'ZPL'} langsung ke printer via TCP socket (port 9100)`}
+              {settings.printMethod === 'serial-com' && `Mengirim ${settings.printerFormat || 'ZPL'} via serial port (USB/RS232)`}
             </small>
           </div>
 

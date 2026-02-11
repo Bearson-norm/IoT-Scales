@@ -1,0 +1,112 @@
+================================
+INSTRUKSI HARD REFRESH BROWSER
+================================
+
+MASALAH: Display-weight freeze karena browser load kode JavaScript lama.
+SOLUSI: Hard refresh untuk load kode baru (index-234013b9.js)
+
+================================
+CARA 1: HARD REFRESH WINDOWS
+================================
+
+1. Buka aplikasi di browser (http://localhost:3001)
+2. Tekan TOMBOL BERIKUT BERSAMAAN:
+   
+   Ctrl + Shift + R
+   
+   ATAU
+   
+   Ctrl + F5
+
+3. TUNGGU sampai halaman reload sepenuhnya (3-5 detik)
+
+================================
+CARA 2: CLEAR CACHE (Jika Cara 1 Tidak Berhasil)
+================================
+
+CHROME/EDGE:
+1. Tekan F12 (buka Developer Tools)
+2. KLIK KANAN pada tombol Refresh (⟳) di browser
+3. Pilih "Empty Cache and Hard Reload"
+4. TUNGGU sampai reload selesai
+5. Tekan F12 lagi untuk tutup Developer Tools
+
+================================
+CARA 3: INCOGNITO MODE (Paling Pasti)
+================================
+
+1. Tutup tab aplikasi yang lama
+2. Buka NEW INCOGNITO/PRIVATE WINDOW:
+   - Chrome/Edge: Ctrl + Shift + N
+   - Firefox: Ctrl + Shift + P
+3. Ketik: http://localhost:3001
+4. Login dan test
+
+================================
+VERIFIKASI BUILD BARU SUDAH LOADED
+================================
+
+1. Buka Developer Tools (F12)
+2. Klik tab "Network"
+3. Refresh halaman (F5)
+4. Cari file "index-*.js" di list
+5. PASTIKAN nama file: index-234013b9.js
+   
+   ✅ BENAR: index-234013b9.js (build baru)
+   ❌ SALAH: index-f7d163b7.js (build lama)
+
+6. Jika masih index-f7d163b7.js:
+   - Clear cache (Cara 2)
+   - Atau gunakan Incognito (Cara 3)
+
+================================
+TEST SETELAH HARD REFRESH
+================================
+
+1. Login
+2. Pilih ingredient pertama
+3. Klik "Start" → Timbang → Complete
+4. Pilih ingredient kedua
+5. LIHAT digital-weight:
+   
+   ✅ BENAR: Menampilkan nilai real-time dari scale (misalnya "0.5 g")
+   ❌ SALAH: Freeze di "1.1 g"
+
+6. Letakkan beban di scale (JANGAN klik Start dulu)
+7. LIHAT digital-weight:
+   
+   ✅ BENAR: Angka update TANPA klik Start
+   ❌ SALAH: Angka tidak update sampai klik Start
+
+================================
+TROUBLESHOOTING
+================================
+
+Q: Sudah hard refresh tapi masih freeze?
+A: 1. Clear browser cache (Cara 2)
+   2. Close semua tab browser
+   3. Buka ulang browser
+   4. Gunakan Incognito mode (Cara 3)
+
+Q: Bagaimana tau sudah load build baru?
+A: Check di Developer Tools → Network → File harus "index-234013b9.js"
+
+Q: Incognito mode juga freeze?
+A: Berarti ada masalah lain. Check:
+   1. Server masih running? (Check terminal)
+   2. WebSocket connected? (Check console browser)
+   3. Ada error di console?
+
+================================
+KESIMPULAN
+================================
+
+Freeze terjadi karena browser load kode lama.
+Hard refresh WAJIB untuk load kode baru.
+Gunakan Incognito mode jika hard refresh tidak berhasil.
+
+Build baru: index-234013b9.js ✅
+Server: http://localhost:3001 ✅
+Status: READY TO TEST ✅
+
+================================

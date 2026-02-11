@@ -1,0 +1,59 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Data Penimbangan Diterima</title>
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+    <div class="container">
+        <header class="header">
+            <h1>Data Penimbangan Diterima</h1>
+            <p>Daftar data penimbangan yang telah dikirim dari sistem IoT Scales</p>
+        </header>
+
+        <!-- Search Box -->
+        <div class="search-container">
+            <div class="search-box">
+                <svg class="search-icon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <circle cx="11" cy="11" r="8"></circle>
+                    <path d="m21 21-4.35-4.35"></path>
+                </svg>
+                <input 
+                    type="text" 
+                    id="searchInput" 
+                    placeholder="Cari berdasarkan Work Order, SKU, atau Formula..."
+                    class="search-input"
+                />
+            </div>
+        </div>
+
+        <!-- Loading State -->
+        <div id="loadingState" class="loading-state">
+            <div class="spinner"></div>
+            <p>Memuat data...</p>
+        </div>
+
+        <!-- Empty State -->
+        <div id="emptyState" class="empty-state" style="display: none;">
+            <svg class="empty-icon" width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
+                <polyline points="14 2 14 8 20 8"></polyline>
+                <line x1="16" y1="13" x2="8" y2="13"></line>
+                <line x1="16" y1="17" x2="8" y2="17"></line>
+                <polyline points="10 9 9 9 8 9"></polyline>
+            </svg>
+            <div class="empty-text" id="emptyText">Belum ada data penimbangan yang diterima</div>
+            <div class="empty-subtext" id="emptySubtext" style="display: none;">
+                Data akan muncul setelah dikirim dari halaman History
+            </div>
+        </div>
+
+        <!-- Data List -->
+        <div id="dataList" class="data-list"></div>
+    </div>
+
+    <script src="app.js"></script>
+</body>
+</html>

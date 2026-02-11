@@ -1,0 +1,13 @@
+{
+  "enabled": true,
+  "model": "vibra",
+  "port": "COM3",
+  "baudRate": 9600,
+  "dataBits": 7,
+  "parity": "even",
+  "stopBits": 2,
+  "timeoutMs": 500,
+  "assertDTR": false,
+  "assertRTS": false,
+  "passiveMode": true
+}

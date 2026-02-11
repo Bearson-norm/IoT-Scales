@@ -242,12 +242,13 @@ body {
 
 .status-indicators {
   display: flex;
-  gap: 15px;
+  gap: 12px;
   padding: 15px 20px;
   background: #f8f9fa;
   border-bottom: 1px solid #e9ecef;
-  justify-content: center;
+  justify-content: flex-start;
   flex-wrap: wrap;
+  align-items: center;
 }
 
 .status-item {
@@ -255,9 +256,17 @@ body {
   align-items: center;
   gap: 8px;
   background: white;
-  padding: 10px 15px;
+  padding: 10px 16px;
   border-radius: 8px;
   box-shadow: 0 2px 5px rgba(0,0,0,0.1);
+  min-width: fit-content;
+  white-space: nowrap;
+}
+
+.status-item span {
+  font-size: 14px;
+  font-weight: 500;
+  color: #2c3e50;
 }
 
 .status-icon {
@@ -281,6 +290,10 @@ body {
 
 .status-icon.empty {
   background: #95a5a6;
+}
+
+.status-icon.total {
+  background: #3498db;
 }
 
 .recipe-section {
@@ -504,7 +517,7 @@ body {
 
 .digital-weight {
   position: absolute;
-  top: 20px;
+  top: 1px;
   right: 30px;
   font-size: 54px;
   font-weight: 800;
@@ -1368,7 +1381,13 @@ body {
   background: white;
   border-radius: 12px;
   box-shadow: 0 4px 15px rgba(0,0,0,0.1);
-  overflow: hidden;
+  overflow: visible;
+  box-sizing: content-box;
+  border-style: solid;
+  border-width: 1px;
+  border-color: rgba(0,0,0,1);
+  padding-left: 80px;
+  padding-right: 80px;
 }
 
 .content-header {
@@ -3046,5 +3065,17 @@ body {
     flex-direction: column;
     align-items: flex-start;
     gap: 15px;
+  }
+}
+
+/* Pulse animation for WebSocket connection indicator */
+@keyframes pulse {
+  0%, 100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 0.7;
+    transform: scale(1.1);
   }
 }

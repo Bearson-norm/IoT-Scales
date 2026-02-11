@@ -229,6 +229,18 @@ if exist "setup-database.bat" (
     copy /Y setup-database.bat release\setup-database.bat >nul
     echo   ✅ Copied setup-database.bat
 )
+
+REM Copy printer-config.json if exists (for fallback printer detection)
+if exist "printer-config.json" (
+    copy /Y printer-config.json release\printer-config.json >nul
+    echo   ✅ Copied printer-config.json
+)
+
+REM Copy scale-config.json if exists
+if exist "scale-config.json" (
+    copy /Y scale-config.json release\scale-config.json >nul
+    echo   ✅ Copied scale-config.json
+)
 echo.
 
 REM Step 5: Create run script

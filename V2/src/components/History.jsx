@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react'
 import api from '../services/api'
-import { History as HistoryIcon, Search, Filter, Download, Eye, Calendar, Clock, User, Package, Database, RotateCcw, X, Printer } from 'lucide-react'
+import { History as HistoryIcon, Search, Filter, Download, Eye, Calendar, Clock, User, Package, Database, RotateCcw, X, Printer, Send } from 'lucide-react'
 import ImportHistory from './ImportHistory'
 
 const History = ({ onNavigateToDetail, currentUser }) => {
@@ -21,6 +21,7 @@ const History = ({ onNavigateToDetail, currentUser }) => {
   const [printHistoryCount, setPrintHistoryCount] = useState(0)
   const [printHistoryByWorkOrder, setPrintHistoryByWorkOrder] = useState({})
   const [printingWorkOrder, setPrintingWorkOrder] = useState(null)
+  const [sendingData, setSendingData] = useState({}) // Track which MO is being sent
   
   // Check if user is QC
   const isQC = currentUser && (currentUser.role === 'QC' || currentUser.role === 'qc')
@@ -378,6 +379,58 @@ const History = ({ onNavigateToDetail, currentUser }) => {
     }
   }
 
+  const handleSendData = async (history) => {
+    const workOrder = history.workOrder
+    setSendingData(prev => ({ ...prev, [workOrder]: true }))
+    
+    try {
+      // Load API reporting config from localStorage
+      const apiReportingConfig = localStorage.getItem('apiReportingConfig')
+      if (!apiReportingConfig) {
+        throw new Error('Konfigurasi API Reporting belum diatur. Silakan atur di Settings > API Reporting')
+      }
+      
+      const config = JSON.parse(apiReportingConfig)
+      if (!config.apiReportingEnabled) {
+        throw new Error('API Reporting belum diaktifkan. Silakan aktifkan di Settings > API Reporting')
+      }
+      
+      // Fetch full history detail
+      const response = await fetch(`/api/history/${encodeURIComponent(workOrder)}`)
+      const data = await response.json()
+      
+      if (!data.success) {
+        throw new Error(data.error || 'Failed to fetch history detail')
+      }
+      
+      // Send data to external API via server endpoint
+      const sendResponse = await fetch('/api/weighing/send-to-external', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          workOrder: data.data.workOrder,
+          ingredients: data.data.ingredients,
+          apiConfig: config
+        }),
+      })
+      
+      const sendResult = await sendResponse.json()
+      
+      if (sendResult.success) {
+        alert(`✅ Data penimbangan untuk MO ${workOrder} berhasil dikirim ke API eksternal!\n\nURL: ${sendResult.url || 'N/A'}`)
+      } else {
+        throw new Error(sendResult.error || 'Failed to send data to external API')
+      }
+    } catch (error) {
+      console.error('Error sending data:', error)
+      alert(`❌ Gagal mengirim data: ${error.message}`)
+    } finally {
+      setSendingData(prev => ({ ...prev, [workOrder]: false }))
+    }
+  }
+
   return (
     <div className="history-page">
       <div className="page-header">
@@ -687,6 +740,29 @@ const History = ({ onNavigateToDetail, currentUser }) => {
                   Aktifkan Kembali
                 </button>
               )}
+              <button 
+                className="action-btn send"
+                onClick={() => handleSendData(history)}
+                disabled={sendingData[history.workOrder]}
+                style={{
+                  padding: '8px 16px',
+                  borderRadius: '6px',
+                  border: '1px solid #8b5cf6',
+                  backgroundColor: sendingData[history.workOrder] ? '#9ca3af' : '#8b5cf6',
+                  color: '#fff',
+                  cursor: sendingData[history.workOrder] ? 'not-allowed' : 'pointer',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '6px',
+                  fontSize: '14px',
+                  fontWeight: '500',
+                  opacity: sendingData[history.workOrder] ? 0.6 : 1
+                }}
+                title="Kirim data penimbangan ke website"
+              >
+                <Send size={16} />
+                {sendingData[history.workOrder] ? 'Mengirim...' : 'Kirim Data'}
+              </button>
               <button 
                 className="action-btn view"
                 onClick={() => {

@@ -1,0 +1,44 @@
+{
+  "enabled": true,
+  "type": "usb",
+  "port": "Xprinter XP-420B",
+  "model": "XP420",
+  "paperWidth": 100,
+  "paperHeight": 72,
+  "format": "ZPL",
+  "autoDetect": true,
+  "fallbackPrinters": [
+    {
+      "name": "Xprinter XP-420B (Copy 1)",
+      "port": "USB007",
+      "driver": "Xprinter XP-420B"
+    },
+    {
+      "name": "Xprinter XP-420B",
+      "port": "USB006",
+      "driver": "Xprinter XP-420B"
+    },
+    {
+      "name": "OneNote (Desktop)",
+      "port": "nul:",
+      "driver": "Send to Microsoft OneNote 16 Driver"
+    },
+    {
+      "name": "Microsoft Print to PDF",
+      "port": "PORTPROMPT:",
+      "driver": "Microsoft Print To PDF"
+    },
+    {
+      "name": "EPSON L3210 Series",
+      "port": "USB001",
+      "driver": "EPSON L3210 Series"
+    },
+    {
+      "name": "AnyDesk Printer",
+      "port": "AD_Port",
+      "driver": "AnyDesk v4 Printer Driver"
+    }
+  ],
+  "detectedPort": "USB006",
+  "detectedName": "Xprinter XP-420B"
+}

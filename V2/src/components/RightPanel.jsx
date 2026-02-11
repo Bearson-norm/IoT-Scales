@@ -3,7 +3,7 @@ import { Scale, Save, Play, AlertCircle, Check } from 'lucide-react'
 import { useAlert } from '../utils/alertModal'
 import PrintConfirmationModal from './PrintConfirmationModal'
 
-const RightPanel = ({ workOrder, selectedIngredient, currentPage, currentWeight, scaleConnected, onSaveProgress, onCompleteWeighing, isWeighingActive, onPrintReceipt, onStartWeighing, zeroCheckWeight = 0, showProductVerification = false }) => {
+const RightPanel = ({ workOrder, selectedIngredient, currentPage, currentWeight, scaleConnected, onSaveProgress, onCompleteWeighing, isWeighingActive, onPrintReceipt, onStartWeighing, zeroCheckWeight = 0, scaleDisplayWeight = 0, showProductVerification = false }) => {
   const { alert } = useAlert()
   const [showPrintConfirmation, setShowPrintConfirmation] = useState(false)
   
@@ -13,6 +13,19 @@ const RightPanel = ({ workOrder, selectedIngredient, currentPage, currentWeight,
   const smoothedCurrentWeightRef = useRef(0)
   const progressBarMaxRef = useRef(null)
   const lastStableProgressBarMaxRef = useRef(null)
+  const lastIngredientIdRef = useRef(null)
+  
+  // CRITICAL: Reset progressBarMax when ingredient changes
+  // This ensures each ingredient gets fresh calculation
+  useEffect(() => {
+    const currentIngredientId = selectedIngredient?.id || selectedIngredient?.code || null;
+    if (currentIngredientId !== lastIngredientIdRef.current) {
+      // Ingredient changed - reset progressBarMax for fresh calculation
+      progressBarMaxRef.current = null;
+      lastStableProgressBarMaxRef.current = null;
+      lastIngredientIdRef.current = currentIngredientId;
+    }
+  }, [selectedIngredient])
   
   // Calculate values that will be used in useMemo (before early returns)
   const savedWeight = workOrder && selectedIngredient ? parseFloat(selectedIngredient.savedWeight || 0) || 0 : 0
@@ -62,73 +75,62 @@ const RightPanel = ({ workOrder, selectedIngredient, currentPage, currentWeight,
   
   // CRITICAL: Calculate progressBarMax before any early returns
   // Must be called before any early returns to follow Rules of Hooks
+  // FIX: Lock progressBarMax once calculated to prevent marker shifting
   const progressBarMax = useMemo(() => {
     // Return default if data not available
     if (!workOrder || !selectedIngredient || targetWeight === 0) {
       return 100
     }
     
-    // Calculate base progressBarMax
+    // CRITICAL: If already calculated for this ingredient, keep it locked
+    // Only recalculate if ingredient changes or if null
+    if (progressBarMaxRef.current !== null && progressBarMaxRef.current > 0) {
+      // Check if currentReading significantly exceeds the locked max (need expansion)
+      const currentReadingValue = isWeighingActive ? (smoothedCurrentWeightRef.current || rawCurrentWeight) : 0;
+      // Only expand if exceeds by more than 20% (very rare case)
+      if (currentReadingValue > progressBarMaxRef.current * 0.95) {
+        const newMax = currentReadingValue * 1.15;
+        progressBarMaxRef.current = newMax;
+        return newMax;
+      }
+      // Otherwise keep locked value
+      return progressBarMaxRef.current;
+    }
+    
+    // Calculate FIXED progressBarMax (only once per ingredient)
     let calculatedProgressBarMax;
     if (remaining > 0) {
       // Use remaining as base, but add buffer for tolerance markers
+      // SIMPLIFIED: Just use remainingMax + buffer, no complex adjustments
       if (remaining <= 100) {
-        calculatedProgressBarMax = remainingMax + 25;
+        calculatedProgressBarMax = remainingMax + 30;
         if (calculatedProgressBarMax < 100) calculatedProgressBarMax = 100;
       } else if (remaining <= 500) {
-        calculatedProgressBarMax = remainingMax * 1.1;
+        calculatedProgressBarMax = remainingMax * 1.15;
       } else if (remaining <= 1000) {
-        calculatedProgressBarMax = remainingMax * 1.08;
+        calculatedProgressBarMax = remainingMax * 1.12;
       } else {
-        const minTolerancePercentage = 0.20;
-        const toleranceBasedMax = remainingToleranceRange / minTolerancePercentage;
-        calculatedProgressBarMax = Math.max(toleranceBasedMax, remainingMax * 1.03);
-      }
-      
-      // Adjust if currentReading significantly exceeds remainingMax
-      const currentReadingForAdjustment = isWeighingActive ? (smoothedCurrentWeightRef.current || rawCurrentWeight) : 0;
-      const adjustmentThreshold = remainingMax * 1.1;
-      if (currentReadingForAdjustment > adjustmentThreshold) {
-        const newMax = Math.max(calculatedProgressBarMax, currentReadingForAdjustment * 1.05);
-        if (progressBarMaxRef.current === null || newMax > progressBarMaxRef.current) {
-          calculatedProgressBarMax = newMax;
-        } else {
-          calculatedProgressBarMax = progressBarMaxRef.current;
-        }
+        calculatedProgressBarMax = remainingMax * 1.08;
       }
       
       if (calculatedProgressBarMax < 100) calculatedProgressBarMax = 100;
     } else {
-      calculatedProgressBarMax = Math.max(100, targetWeight * 1.1);
+      calculatedProgressBarMax = Math.max(100, targetWeight * 1.15);
     }
     
-    // Smooth progressBarMax changes
-    if (progressBarMaxRef.current === null) {
-      progressBarMaxRef.current = calculatedProgressBarMax
-      lastStableProgressBarMaxRef.current = calculatedProgressBarMax
-      return calculatedProgressBarMax
-    } else {
-      const previousMax = progressBarMaxRef.current
-      if (previousMax === 0) {
-        progressBarMaxRef.current = calculatedProgressBarMax
-        return calculatedProgressBarMax
-      }
-      
-      const changePercent = Math.abs((calculatedProgressBarMax - previousMax) / previousMax) * 100
-      
-      if (changePercent > 5 || calculatedProgressBarMax > previousMax) {
-        const smoothingFactor = 0.3
-        const smoothed = previousMax * (1 - smoothingFactor) + calculatedProgressBarMax * smoothingFactor
-        progressBarMaxRef.current = smoothed
-        if (changePercent > 10) {
-          lastStableProgressBarMaxRef.current = calculatedProgressBarMax
-        }
-        return smoothed
-      } else {
-        return previousMax
-      }
-    }
-  }, [workOrder, selectedIngredient, targetWeight, savedWeight, remaining, remainingMax, remainingToleranceRange, isWeighingActive, rawCurrentWeight, minWeight, maxWeight])
+    // Lock this value - don't change it anymore
+    progressBarMaxRef.current = calculatedProgressBarMax;
+    lastStableProgressBarMaxRef.current = calculatedProgressBarMax;
+    
+    return calculatedProgressBarMax;
+  }, [workOrder, selectedIngredient, targetWeight, savedWeight, remaining, remainingMax, isWeighingActive, rawCurrentWeight])
+  
+  // Zero check logic for Start button validation
+  // Button is disabled if: 1) actively weighing, OR 2) scale reading is not zero (outside ±0.5g tolerance)
+  const zeroThreshold = 0.5 // ±0.5 gram tolerance
+  const absoluteWeight = Math.abs(scaleDisplayWeight || 0)
+  const isNotZero = absoluteWeight > zeroThreshold
+  const isButtonDisabled = isWeighingActive || isNotZero
   
   if (!workOrder) {
     return (
@@ -145,13 +147,38 @@ const RightPanel = ({ workOrder, selectedIngredient, currentPage, currentWeight,
   if (!selectedIngredient) {
     return (
       <div className="right-panel">
-        <div className="weighing-section">
-          <div className="weighing-title">
-            <Scale size={28} />
+        <div className="weighing-section" style={{ position: 'relative', padding: '15px' }}>
+          <div className="weighing-title" style={{ marginBottom: '10px' }}>
+            <Scale size={24} />
             Scale
           </div>
           
-          <div className="work-order-info">
+          {/* CRITICAL FIX: Always show digital-weight even when no ingredient selected
+              This prevents freeze when switching ingredients or during modal transitions */}
+          <div className="digital-weight" style={{ top: '1px', right: '15px', fontSize: '42px' }}>
+            {(() => {
+              // CRITICAL: Safe handling of scaleDisplayWeight to prevent errors
+              const displayValue = (typeof scaleDisplayWeight === 'number' && !isNaN(scaleDisplayWeight))
+                ? Math.round(Math.abs(scaleDisplayWeight) * 10) / 10
+                : 0.0
+              return displayValue.toFixed(1)
+            })()} g
+            {/* WebSocket active indicator - shows data is being received */}
+            <div style={{ 
+              position: 'absolute', 
+              top: '-8px', 
+              right: '-8px', 
+              width: '12px', 
+              height: '12px', 
+              backgroundColor: scaleConnected ? '#22c55e' : '#ef4444',
+              borderRadius: '50%',
+              border: '2px solid white',
+              boxShadow: '0 0 8px rgba(0,0,0,0.3)',
+              animation: scaleConnected ? 'pulse 2s infinite' : 'none'
+            }} title={scaleConnected ? 'WebSocket aktif - Data real-time' : 'WebSocket tidak terhubung'} />
+          </div>
+          
+          <div className="work-order-info" style={{ marginTop: '60px' }}>
             <div className="info-row">
               <span className="info-label">Work Order:</span>
               <span className="info-value">{workOrder.workOrder}</span>
@@ -201,13 +228,16 @@ const RightPanel = ({ workOrder, selectedIngredient, currentPage, currentWeight,
   const totalAccumulated = savedWeight + currentReading; // Display total = saved + current reading
   const current = isWeighingActive ? totalAccumulated : savedWeight; // Only show accumulated when weighing, otherwise show saved weight only
   
-  // OPTIMIZED: Zero check for start weighing button
-  // Uses digital-weight display value directly for immediate responsiveness
-  const zeroThreshold = 0.5 // Allow ±0.5g tolerance for zero
-  // Use absolute value to handle both positive and negative values
-  // This value comes from the digital-weight display, ensuring consistency
-  const actualWeight = Math.abs(zeroCheckWeight !== undefined && zeroCheckWeight !== null ? zeroCheckWeight : 0)
-  const isZero = actualWeight <= zeroThreshold
+  // REMOVED: Zero check debug logging - user requested to remove zero check
+  
+  // REMOVED: Duplicate zero check calculation and useEffect - already done before early returns above (line 133-182)
+  // This code was causing React error #310 because useEffect was called after early returns
+  // All hooks must be called before any early returns to follow Rules of Hooks
+  
+  // REMOVED: Duplicate variable definitions - already defined before early returns above (line 133-182)
+  // These variables are already available from the definitions before early returns
+  
+  // REMOVED: Zero check debug logging - user requested to remove zero check
   
   // Debug: Log zero check status (remove useEffect to avoid React error)
   // Values are computed on each render, no need for useEffect
@@ -227,19 +257,21 @@ const RightPanel = ({ workOrder, selectedIngredient, currentPage, currentWeight,
   
   // Calculate percentage positions relative to progressBarMax
   // Progress fill: currentReading / remaining (how much of remaining has been added)
+  // CRITICAL: Round to 2 decimal places to prevent micro-jitter from floating point precision
   const currentPercent = remaining > 0 && progressBarMax > 0 
-    ? Math.min(100, Math.max(0, (currentReading / progressBarMax) * 100)) 
+    ? Math.round(Math.min(100, Math.max(0, (currentReading / progressBarMax) * 100)) * 100) / 100
     : 0;
   
   // Tolerance markers: positions where currentReading should be (relative to remaining)
+  // CRITICAL: Round to 2 decimal places for stability
   const remainingTargetPercent = remaining > 0 && progressBarMax > 0 
-    ? (remainingTarget / progressBarMax) * 100 
+    ? Math.round((remainingTarget / progressBarMax) * 100 * 100) / 100
     : 0;
   const remainingMinPercent = remaining > 0 && progressBarMax > 0 
-    ? Math.max(0, (remainingMin / progressBarMax) * 100) 
+    ? Math.round(Math.max(0, (remainingMin / progressBarMax) * 100) * 100) / 100
     : 0;
   const remainingMaxPercent = remaining > 0 && progressBarMax > 0 
-    ? Math.min(100, (remainingMax / progressBarMax) * 100) 
+    ? Math.round(Math.min(100, (remainingMax / progressBarMax) * 100) * 100) / 100
     : 0;
   
   // For tolerance bar: calculate min/max percent based on total target weight
@@ -269,15 +301,32 @@ const RightPanel = ({ workOrder, selectedIngredient, currentPage, currentWeight,
           Scale
         </div>
         {/* Show current reading from scale (not total accumulated) */}
-        {/* OPTIMIZED: Show zeroCheckWeight before weighing starts, currentReading during weighing
-            Uses direct value from digital-weight display for better performance and responsiveness */}
-        <div className="digital-weight" style={{ top: '15px', right: '15px', fontSize: '42px' }}>
-          {isWeighingActive 
-            ? currentReading.toFixed(1) 
-            : (zeroCheckWeight !== undefined && zeroCheckWeight !== null 
-                ? Math.round(Math.abs(zeroCheckWeight) * 10) / 10 
-                : 0.0).toFixed(1)
-          } g
+        {/* CRITICAL: Always use scaleDisplayWeight for display - this is real-time value from scale
+            zeroCheckWeight is only for button validation, not for display
+            scaleDisplayWeight is always updated from WebSocket, regardless of weighing mode
+            CRITICAL: Handle undefined/null/NaN safely to prevent display errors */}
+        <div className="digital-weight" style={{ top: '1px', right: '15px', fontSize: '42px' }}>
+          {(() => {
+            // CRITICAL: Safe handling of scaleDisplayWeight to prevent errors
+            // Check if value is valid number, otherwise use 0
+            const displayValue = (typeof scaleDisplayWeight === 'number' && !isNaN(scaleDisplayWeight))
+              ? Math.round(Math.abs(scaleDisplayWeight) * 10) / 10
+              : 0.0
+            return displayValue.toFixed(1)
+          })()} g
+          {/* WebSocket active indicator - shows data is being received */}
+          <div style={{ 
+            position: 'absolute', 
+            top: '-8px', 
+            right: '-8px', 
+            width: '12px', 
+            height: '12px', 
+            backgroundColor: scaleConnected ? '#22c55e' : '#ef4444',
+            borderRadius: '50%',
+            border: '2px solid white',
+            boxShadow: '0 0 8px rgba(0,0,0,0.3)',
+            animation: scaleConnected ? 'pulse 2s infinite' : 'none'
+          }} title={scaleConnected ? 'WebSocket aktif - Data real-time' : 'WebSocket tidak terhubung'} />
         </div>
         
         <div className="info-badges" style={{ marginBottom: '8px', gap: '8px' }}>
@@ -434,8 +483,22 @@ const RightPanel = ({ workOrder, selectedIngredient, currentPage, currentWeight,
           {/* Weight Display Section - Separate row */}
           <div className="weight-display" style={{ marginTop: '4px', marginBottom: '2px', padding: '8px 12px', display: 'block', width: '100%' }}>
             <div className="current-weight" style={{ fontSize: '26px' }}>
-              {/* Display: saved weight (accumulated weight from previous saves) */}
-              {savedWeight.toFixed(1)} g
+              {/* CRITICAL: Display logic:
+                  - Jika weighing aktif: tampilkan currentReading (accumulated weight)
+                  - Jika TIDAK weighing (belum Start): tampilkan scaleDisplayWeight (real-time dari timbangan)
+                  - Hanya tampilkan savedWeight jika ingredient tidak ada atau null
+                  
+                  REASONING: Ketika ingredient sudah dipilih tapi belum Start:
+                  - User ingin lihat berat real-time dari timbangan (untuk zero check)
+                  - savedWeight hanya relevan untuk tracking, bukan untuk display saat persiapan weighing
+                  - Setelah klik Start, baru tampilkan currentReading (yang terakumulasi)
+              */}
+              {isWeighingActive 
+                ? currentReading.toFixed(1)
+                : selectedIngredient 
+                  ? (Math.abs(scaleDisplayWeight || 0)).toFixed(1)
+                  : savedWeight.toFixed(1)
+              } g
             </div>
             <div className="target-weight" style={{ fontSize: '16px' }}>
               {/* Display: remaining weight (how much more to add) */}
@@ -521,35 +584,34 @@ const RightPanel = ({ workOrder, selectedIngredient, currentPage, currentWeight,
             {!isWeighingActive && !showProductVerification ? (
               <button 
                 className="action-btn primary" 
-                onClick={async (e) => {
-                  e.preventDefault()
-                  e.stopPropagation()
-                  // OPTIMIZED: Use digital-weight display value directly for zero check
-                  // This provides immediate feedback without waiting for polling
-                  const displayWeight = zeroCheckWeight !== undefined && zeroCheckWeight !== null 
-                    ? Math.abs(zeroCheckWeight)
-                    : 0
-                  const isZeroBasedOnDisplay = displayWeight <= zeroThreshold
-                  
-                  // Call onStartWeighing which will do a fresh check
-                  // Button is enabled based on current display value for better UX
-                  if (onStartWeighing) {
-                    // onStartWeighing will do its own fresh zero check
-                    await onStartWeighing()
-                  }
-                }}
-                // OPTIMIZED: Enable button based on digital-weight display value
-                // This makes button responsive to the displayed weight
-                disabled={!isZero}
-                style={{
-                  padding: '6px 14px',
-                  fontSize: '12px',
-                  height: '32px',
-                  opacity: isZero ? 1 : 0.6,
-                  cursor: isZero ? 'pointer' : 'not-allowed',
-                  transition: 'opacity 0.2s ease' // Smooth transition for better UX
-                }}
-                title={!isZero ? `Timbangan harus zero sebelum memulai penimbangan (Nilai: ${actualWeight.toFixed(2)}g)` : 'Mulai penimbangan - akan melakukan pengecekan zero terbaru'}
+              onClick={async (e) => {
+                e.preventDefault()
+                e.stopPropagation()
+                
+                // REMOVED: Zero check - user requested to remove zero check
+                // Proceed directly with starting weighing
+                if (onStartWeighing) {
+                  await onStartWeighing()
+                }
+              }}
+              // Button disabled if: 1) actively weighing, OR 2) scale reading is not zero
+              disabled={isButtonDisabled}
+              style={{
+                padding: '6px 14px',
+                fontSize: '12px',
+                height: '32px',
+                opacity: !isButtonDisabled ? 1 : 0.5,
+                cursor: !isButtonDisabled ? 'pointer' : 'not-allowed',
+                backgroundColor: !isButtonDisabled ? '#3b82f6' : '#9ca3af',
+                transition: 'opacity 0.2s ease'
+              }}
+              title={
+                isWeighingActive 
+                  ? 'Sedang dalam proses penimbangan' 
+                  : isNotZero 
+                    ? `Timbangan harus nol terlebih dahulu (saat ini: ${absoluteWeight.toFixed(1)}g, toleransi: ±${zeroThreshold}g)` 
+                    : 'Mulai penimbangan'
+              }
               >
                 <Play size={16} />
                 Start

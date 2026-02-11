@@ -1,7 +1,7 @@
 import React from 'react'
-import { Home, List, Settings, History, AlertTriangle, QrCode, Database, Upload, Package } from 'lucide-react'
+import { Home, List, Settings, History, AlertTriangle, QrCode, Database, Upload, Package, Users, Inbox } from 'lucide-react'
 
-const LeftPanel = ({ workOrder, recipe, onIngredientClick, onStartScan, onStartMOScan, currentPage, onPageChange }) => {
+const LeftPanel = ({ workOrder, recipe, onIngredientClick, onStartScan, onStartMOScan, currentPage, onPageChange, currentUser }) => {
   const getStatusCounts = () => {
     if (!recipe.length) return { completed: 0, pending: 0, empty: 0, total: 0 }
     
@@ -25,6 +25,12 @@ const LeftPanel = ({ workOrder, recipe, onIngredientClick, onStartScan, onStartM
     if (ingredient.status === 'weighing') return 'active'
     return 'pending'
   }
+
+  // Check if user is QC
+  const isQC = currentUser && (currentUser.role === 'QC' || currentUser.role === 'qc')
+  
+  // Check if user is Admin (case-insensitive)
+  const isAdmin = currentUser && currentUser.role && currentUser.role.toLowerCase() === 'admin'
 
   // Selalu tampilkan navigation tipis
   return (
@@ -65,6 +71,22 @@ const LeftPanel = ({ workOrder, recipe, onIngredientClick, onStartScan, onStartM
         >
           <History size={20} />
         </button>
+        <button 
+          className={`nav-item-thin ${currentPage === 'weighing-receiver' || (currentPage && currentPage.startsWith('weighing-receiver-detail-')) ? 'active' : ''}`}
+          onClick={() => onPageChange('weighing-receiver')}
+          title="Data Penimbangan Diterima"
+        >
+          <Inbox size={20} />
+        </button>
+        {isAdmin && (
+          <button 
+            className={`nav-item-thin ${currentPage === 'user-management' ? 'active' : ''}`}
+            onClick={() => onPageChange('user-management')}
+            title="User Management"
+          >
+            <Users size={20} />
+          </button>
+        )}
       </div>
       <div className="leftpanel-action">
         <button

@@ -116,6 +116,19 @@ const EditFormulation = ({ formulation, products, onSave, onCancel }) => {
     }
   }, [formulation, products, loadIngredients])
 
+  // Listen for database_updated event to refresh ingredients after import
+  useEffect(() => {
+    const handleDatabaseUpdate = () => {
+      if (formulation?.id) {
+        console.log('🔄 Database updated event received, refreshing ingredients for formulation:', formulation.id)
+        loadIngredients()
+      }
+    }
+
+    window.addEventListener('database_updated', handleDatabaseUpdate)
+    return () => window.removeEventListener('database_updated', handleDatabaseUpdate)
+  }, [formulation, loadIngredients])
+
   const handleSave = async () => {
     try {
       setLoading(true)

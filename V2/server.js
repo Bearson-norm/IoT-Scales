@@ -4,7 +4,10 @@ const { Pool } = require('pg');
 const path = require('path');
 const fs = require('fs');
 const http = require('http');
+const https = require('https');
+const url = require('url');
 const WebSocket = require('ws');
+const bcrypt = require('bcryptjs');
 
 const app = express();
 const server = http.createServer(app);
@@ -180,7 +183,19 @@ if (process.pkg) {
   logToFile(`📁 Uploads directory: ${uploadsDir}`);
 } else {
   // Normal development mode
-  distDir = path.join(__dirname, 'dist');
+  // Frontend build output is in <repo>/dist
+  const candidateDistDirs = [
+    path.join(__dirname, 'dist'),
+  ];
+
+  distDir = candidateDistDirs.find((dir) => {
+    try {
+      return fs.existsSync(path.join(dir, 'index.html'));
+    } catch {
+      return false;
+    }
+  }) || path.join(__dirname, 'dist');
+
   uploadsDir = path.join(__dirname, 'uploads');
   logToFile(`🔧 Development mode detected`);
   logToFile(`📁 Dist directory: ${distDir}`);
@@ -1018,7 +1033,21 @@ function parseWeightSmart(raw) {
 // - Control lines: assert DTR/RTS saat open
 // - Port Windows: dukung normalisasi COM10+ (\\\\.\\COM10)
 // - Tidak menggunakan port jika sedang dipakai aplikasi lain
-let scaleConfig = {
+
+// Configuration file paths for persistence
+function getConfigFilePath(filename) {
+  if (process.pkg) {
+    const exeDir = path.dirname(process.execPath);
+    return path.join(exeDir, filename);
+  }
+  return path.join(__dirname, filename);
+}
+
+const SCALE_CONFIG_FILE = getConfigFilePath('scale-config.json');
+const PRINTER_CONFIG_FILE = getConfigFilePath('printer-config.json');
+
+// Default scale configuration
+const defaultScaleConfig = {
   enabled: false,
   model: 'vibra',
   port: process.env.SCALE_PORT || 'COM1',
@@ -1026,15 +1055,44 @@ let scaleConfig = {
   dataBits: 8,
   parity: 'none',
   stopBits: 2,
-  timeoutMs: 300, // Optimized: reduced to 300ms for faster response (scale typically responds in <200ms)
+  timeoutMs: 500, // Optimized: reduced to 500ms for faster response (scale typically responds in <300ms)
   assertDTR: false,  // DTR disabled by default - many scales (especially Prolific) don't like DTR/RTS enabled
   assertRTS: false   // RTS disabled by default - can cause scale to reset or turn off
 };
 
+// Load scale configuration from file
+function loadScaleConfig() {
+  try {
+    if (fs.existsSync(SCALE_CONFIG_FILE)) {
+      const data = fs.readFileSync(SCALE_CONFIG_FILE, 'utf8');
+      const config = JSON.parse(data);
+      logToFile(`✅ Loaded scale config from: ${SCALE_CONFIG_FILE}`);
+      return { ...defaultScaleConfig, ...config };
+    }
+  } catch (error) {
+    logToFile(`⚠️  Failed to load scale config: ${error.message}, using defaults`);
+  }
+  return defaultScaleConfig;
+}
+
+// Save scale configuration to file
+function saveScaleConfig(config) {
+  try {
+    fs.writeFileSync(SCALE_CONFIG_FILE, JSON.stringify(config, null, 2), 'utf8');
+    logToFile(`✅ Saved scale config to: ${SCALE_CONFIG_FILE}`);
+    return true;
+  } catch (error) {
+    logToFile(`❌ Failed to save scale config: ${error.message}`);
+    return false;
+  }
+}
+
+let scaleConfig = loadScaleConfig();
+
 let SerialPortLib = null;
 let activePort = null; // Track active port to prevent multiple opens
 let lastReadTime = 0;
-const MIN_READ_INTERVAL = 50; // Optimized to 50ms for faster zero check polling (allows ~20 requests/second) while preventing ERR_INSUFFICIENT_RESOURCES
+const MIN_READ_INTERVAL = 100; // Optimized to 100ms for seamless updates (allows ~10 requests/second) while preventing ERR_INSUFFICIENT_RESOURCES
 let pendingRead = null; // Queue for concurrent requests
 
 // Pre-compiled regex patterns for faster parsing (optimized)
@@ -1274,6 +1332,524 @@ function parseVibraData(rawData) {
   };
 }
 
+// Authentication endpoint
+app.post('/api/auth/login', async (req, res) => {
+  try {
+    const { username, password } = req.body;
+
+    if (!username || !password) {
+      return res.status(400).json({
+        success: false,
+        error: 'Username dan password diperlukan'
+      });
+    }
+
+    // Query user from database
+    const result = await pool.query(
+      'SELECT id, username, name, email, password_hash, role, status FROM master_user WHERE username = $1',
+      [username.trim().toLowerCase()]
+    );
+
+    if (result.rows.length === 0) {
+      return res.status(401).json({
+        success: false,
+        error: 'Username atau password salah'
+      });
+    }
+
+    const user = result.rows[0];
+
+    // Check if user is active
+    if (user.status !== 'active') {
+      return res.status(403).json({
+        success: false,
+        error: 'Akun tidak aktif. Hubungi administrator'
+      });
+    }
+
+    // Verify password using bcrypt
+    const passwordMatch = await bcrypt.compare(password, user.password_hash);
+
+    if (!passwordMatch) {
+      return res.status(401).json({
+        success: false,
+        error: 'Username atau password salah'
+      });
+    }
+
+    // Update last login timestamp
+    await pool.query(
+      'UPDATE master_user SET last_login = CURRENT_TIMESTAMP WHERE id = $1',
+      [user.id]
+    );
+
+    // Return user info (without password_hash)
+    res.json({
+      success: true,
+      user: {
+        id: user.id,
+        username: user.username,
+        name: user.name,
+        email: user.email,
+        role: user.role
+      }
+    });
+  } catch (error) {
+    console.error('Login error:', error);
+    logToFile(`❌ Login error: ${error.message}`);
+    res.status(500).json({
+      success: false,
+      error: 'Terjadi kesalahan saat login. Silakan coba lagi'
+    });
+  }
+});
+
+// Endpoint to update user password (for admin or self-service password reset)
+app.post('/api/auth/update-password', async (req, res) => {
+  try {
+    const { username, oldPassword, newPassword, adminPassword } = req.body;
+
+    if (!username || !newPassword) {
+      return res.status(400).json({
+        success: false,
+        error: 'Username dan password baru diperlukan'
+      });
+    }
+
+    // Query user from database
+    const result = await pool.query(
+      'SELECT id, username, password_hash, role FROM master_user WHERE username = $1',
+      [username.trim().toLowerCase()]
+    );
+
+    if (result.rows.length === 0) {
+      return res.status(404).json({
+        success: false,
+        error: 'User tidak ditemukan'
+      });
+    }
+
+    const user = result.rows[0];
+
+    // If oldPassword provided, verify it (for self-service password change)
+    // If adminPassword provided, verify admin access (for admin reset)
+    if (oldPassword) {
+      const passwordMatch = await bcrypt.compare(oldPassword, user.password_hash);
+      if (!passwordMatch) {
+        return res.status(401).json({
+          success: false,
+          error: 'Password lama salah'
+        });
+      }
+    } else if (adminPassword) {
+      // Verify admin password
+      const adminResult = await pool.query(
+        'SELECT password_hash FROM master_user WHERE role = $1 LIMIT 1',
+        ['admin']
+      );
+      if (adminResult.rows.length === 0) {
+        return res.status(403).json({
+          success: false,
+          error: 'Admin user tidak ditemukan'
+        });
+      }
+      const adminPasswordMatch = await bcrypt.compare(adminPassword, adminResult.rows[0].password_hash);
+      if (!adminPasswordMatch) {
+        return res.status(403).json({
+          success: false,
+          error: 'Password admin salah'
+        });
+      }
+    } else {
+      return res.status(400).json({
+        success: false,
+        error: 'Password lama atau password admin diperlukan'
+      });
+    }
+
+    // Hash new password
+    const newPasswordHash = await bcrypt.hash(newPassword, 10);
+
+    // Update password in database
+    await pool.query(
+      'UPDATE master_user SET password_hash = $1, updated_at = CURRENT_TIMESTAMP WHERE username = $2',
+      [newPasswordHash, username.trim().toLowerCase()]
+    );
+
+    res.json({
+      success: true,
+      message: 'Password berhasil diupdate'
+    });
+  } catch (error) {
+    console.error('Update password error:', error);
+    logToFile(`❌ Update password error: ${error.message}`);
+    res.status(500).json({
+      success: false,
+      error: 'Terjadi kesalahan saat update password. Silakan coba lagi'
+    });
+  }
+});
+
+// User Management API Endpoints (Admin only)
+// Get all users
+app.get('/api/users', async (req, res) => {
+  try {
+    // TODO: Add admin authentication middleware
+    const result = await pool.query(`
+      SELECT 
+        id, 
+        username, 
+        name, 
+        email, 
+        role, 
+        status, 
+        last_login, 
+        created_at, 
+        updated_at
+      FROM master_user
+      ORDER BY created_at DESC
+    `);
+
+    res.json({
+      success: true,
+      data: result.rows.map(row => ({
+        id: row.id,
+        username: row.username,
+        name: row.name,
+        email: row.email,
+        role: row.role,
+        status: row.status,
+        lastLogin: row.last_login,
+        createdAt: row.created_at,
+        updatedAt: row.updated_at
+      }))
+    });
+  } catch (error) {
+    console.error('Get users error:', error);
+    logToFile(`❌ Get users error: ${error.message}`);
+    res.status(500).json({
+      success: false,
+      error: 'Gagal mengambil data user'
+    });
+  }
+});
+
+// Get single user by ID
+app.get('/api/users/:id', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const result = await pool.query(
+      'SELECT id, username, name, email, role, status, last_login, created_at, updated_at FROM master_user WHERE id = $1',
+      [id]
+    );
+
+    if (result.rows.length === 0) {
+      return res.status(404).json({
+        success: false,
+        error: 'User tidak ditemukan'
+      });
+    }
+
+    const user = result.rows[0];
+    res.json({
+      success: true,
+      data: {
+        id: user.id,
+        username: user.username,
+        name: user.name,
+        email: user.email,
+        role: user.role,
+        status: user.status,
+        lastLogin: user.last_login,
+        createdAt: user.created_at,
+        updatedAt: user.updated_at
+      }
+    });
+  } catch (error) {
+    console.error('Get user error:', error);
+    logToFile(`❌ Get user error: ${error.message}`);
+    res.status(500).json({
+      success: false,
+      error: 'Gagal mengambil data user'
+    });
+  }
+});
+
+// Create new user
+app.post('/api/users', async (req, res) => {
+  try {
+    const { username, name, email, password, role, status } = req.body;
+
+    // Validation
+    if (!username || !name || !email || !password || !role) {
+      return res.status(400).json({
+        success: false,
+        error: 'Username, nama, email, password, dan role harus diisi'
+      });
+    }
+
+    // Validate role
+    const validRoles = ['admin', 'supervisor', 'operator', 'qc'];
+    if (!validRoles.includes(role)) {
+      return res.status(400).json({
+        success: false,
+        error: 'Role tidak valid. Role yang tersedia: admin, supervisor, operator, qc'
+      });
+    }
+
+    // Check if username already exists
+    const existingUser = await pool.query(
+      'SELECT id FROM master_user WHERE username = $1',
+      [username.trim().toLowerCase()]
+    );
+
+    if (existingUser.rows.length > 0) {
+      return res.status(400).json({
+        success: false,
+        error: 'Username sudah digunakan'
+      });
+    }
+
+    // Check if email already exists
+    const existingEmail = await pool.query(
+      'SELECT id FROM master_user WHERE email = $1',
+      [email.trim().toLowerCase()]
+    );
+
+    if (existingEmail.rows.length > 0) {
+      return res.status(400).json({
+        success: false,
+        error: 'Email sudah digunakan'
+      });
+    }
+
+    // Hash password
+    const passwordHash = await bcrypt.hash(password, 10);
+
+    // Insert user (master_user table doesn't have created_by column based on schema)
+    const result = await pool.query(
+      `INSERT INTO master_user (username, name, email, password_hash, role, status)
+       VALUES ($1, $2, $3, $4, $5, $6)
+       RETURNING id, username, name, email, role, status, created_at, updated_at`,
+      [
+        username.trim().toLowerCase(),
+        name.trim(),
+        email.trim().toLowerCase(),
+        passwordHash,
+        role,
+        status || 'active'
+      ]
+    );
+
+    const newUser = result.rows[0];
+    res.json({
+      success: true,
+      message: 'User berhasil ditambahkan',
+      data: {
+        id: newUser.id,
+        username: newUser.username,
+        name: newUser.name,
+        email: newUser.email,
+        role: newUser.role,
+        status: newUser.status,
+        createdAt: newUser.created_at,
+        updatedAt: newUser.updated_at
+      }
+    });
+  } catch (error) {
+    console.error('Create user error:', error);
+    console.error('Error stack:', error.stack);
+    logToFile(`❌ Create user error: ${error.message}`);
+    logToFile(`❌ Create user error stack: ${error.stack}`);
+    res.status(500).json({
+      success: false,
+      error: 'Gagal membuat user baru',
+      details: process.env.NODE_ENV === 'development' ? error.message : undefined
+    });
+  }
+});
+
+// Update user
+app.put('/api/users/:id', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { username, name, email, password, role, status } = req.body;
+
+    // Check if user exists
+    const userCheck = await pool.query(
+      'SELECT id FROM master_user WHERE id = $1',
+      [id]
+    );
+
+    if (userCheck.rows.length === 0) {
+      return res.status(404).json({
+        success: false,
+        error: 'User tidak ditemukan'
+      });
+    }
+
+    // Build update query dynamically
+    const updates = [];
+    const values = [];
+    let paramIndex = 1;
+
+    if (username !== undefined) {
+      // Check if new username conflicts with existing user
+      const existingUser = await pool.query(
+        'SELECT id FROM master_user WHERE username = $1 AND id != $2',
+        [username.trim().toLowerCase(), id]
+      );
+      if (existingUser.rows.length > 0) {
+        return res.status(400).json({
+          success: false,
+          error: 'Username sudah digunakan oleh user lain'
+        });
+      }
+      updates.push(`username = $${paramIndex++}`);
+      values.push(username.trim().toLowerCase());
+    }
+
+    if (name !== undefined) {
+      updates.push(`name = $${paramIndex++}`);
+      values.push(name.trim());
+    }
+
+    if (email !== undefined) {
+      // Check if new email conflicts with existing user
+      const existingEmail = await pool.query(
+        'SELECT id FROM master_user WHERE email = $1 AND id != $2',
+        [email.trim().toLowerCase(), id]
+      );
+      if (existingEmail.rows.length > 0) {
+        return res.status(400).json({
+          success: false,
+          error: 'Email sudah digunakan oleh user lain'
+        });
+      }
+      updates.push(`email = $${paramIndex++}`);
+      values.push(email.trim().toLowerCase());
+    }
+
+    if (password !== undefined && password.trim() !== '') {
+      const passwordHash = await bcrypt.hash(password, 10);
+      updates.push(`password_hash = $${paramIndex++}`);
+      values.push(passwordHash);
+    }
+
+    if (role !== undefined) {
+      const validRoles = ['admin', 'supervisor', 'operator', 'qc'];
+      if (!validRoles.includes(role)) {
+        return res.status(400).json({
+          success: false,
+          error: 'Role tidak valid'
+        });
+      }
+      updates.push(`role = $${paramIndex++}`);
+      values.push(role);
+    }
+
+    if (status !== undefined) {
+      updates.push(`status = $${paramIndex++}`);
+      values.push(status);
+    }
+
+    if (updates.length === 0) {
+      return res.status(400).json({
+        success: false,
+        error: 'Tidak ada data yang diupdate'
+      });
+    }
+
+    // Add updated_at
+    updates.push(`updated_at = CURRENT_TIMESTAMP`);
+    values.push(id);
+
+    const query = `UPDATE master_user SET ${updates.join(', ')} WHERE id = $${paramIndex} RETURNING id, username, name, email, role, status, last_login, created_at, updated_at`;
+    
+    const result = await pool.query(query, values);
+
+    res.json({
+      success: true,
+      message: 'User berhasil diupdate',
+      data: {
+        id: result.rows[0].id,
+        username: result.rows[0].username,
+        name: result.rows[0].name,
+        email: result.rows[0].email,
+        role: result.rows[0].role,
+        status: result.rows[0].status,
+        lastLogin: result.rows[0].last_login,
+        createdAt: result.rows[0].created_at,
+        updatedAt: result.rows[0].updated_at
+      }
+    });
+  } catch (error) {
+    console.error('Update user error:', error);
+    logToFile(`❌ Update user error: ${error.message}`);
+    res.status(500).json({
+      success: false,
+      error: 'Gagal mengupdate user'
+    });
+  }
+});
+
+// Delete user
+app.delete('/api/users/:id', async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    // Check if user exists
+    const userCheck = await pool.query(
+      'SELECT id, role FROM master_user WHERE id = $1',
+      [id]
+    );
+
+    if (userCheck.rows.length === 0) {
+      return res.status(404).json({
+        success: false,
+        error: 'User tidak ditemukan'
+      });
+    }
+
+    // Prevent deleting the last admin
+    if (userCheck.rows[0].role === 'admin') {
+      const adminCount = await pool.query(
+        "SELECT COUNT(*) as count FROM master_user WHERE role = 'admin' AND status = 'active'"
+      );
+      if (parseInt(adminCount.rows[0].count) <= 1) {
+        return res.status(400).json({
+          success: false,
+          error: 'Tidak dapat menghapus admin terakhir'
+        });
+      }
+    }
+
+    // Delete user
+    await pool.query('DELETE FROM master_user WHERE id = $1', [id]);
+
+    res.json({
+      success: true,
+      message: 'User berhasil dihapus'
+    });
+  } catch (error) {
+    console.error('Delete user error:', error);
+    logToFile(`❌ Delete user error: ${error.message}`);
+    
+    // Check for foreign key constraint
+    if (error.code === '23503') {
+      return res.status(400).json({
+        success: false,
+        error: 'User tidak dapat dihapus karena masih memiliki data terkait. Ubah status menjadi inactive sebagai gantinya.'
+      });
+    }
+
+    res.status(500).json({
+      success: false,
+      error: 'Gagal menghapus user'
+    });
+  }
+});
+
 app.get('/api/scale/config', (req, res) => {
   res.json({ 
     success: true, 
@@ -1298,6 +1874,9 @@ app.post('/api/scale/config', async (req, res) => {
       stopBits: cfg.stopBits !== undefined ? cfg.stopBits : scaleConfig.stopBits,
       parity: cfg.parity || scaleConfig.parity
     };
+    
+    // Save configuration to file
+    saveScaleConfig(scaleConfig);
     
     // Close active port if port or serial settings changed
     const portChanged = oldPort !== scaleConfig.port;
@@ -1722,6 +2301,9 @@ app.post('/api/scale/auto-configure', async (req, res) => {
     console.log('✅ Auto-configure completed successfully');
     console.log(`   Updated config:`, scaleConfig);
 
+    // Save configuration to file
+    saveScaleConfig(scaleConfig);
+
     res.json({
       success: true,
       message: 'Scale configuration detected and applied successfully',
@@ -1761,23 +2343,15 @@ app.get('/api/scale/read', async (req, res) => {
   
   // Throttle requests to prevent too many concurrent opens
   // Use a more lenient rate limit to prevent ERR_INSUFFICIENT_RESOURCES
-  // OPTIMIZED: Allow zero check polling (1s interval) even with weighing active polling (100ms)
-  // Check if this is a zero check request (user-agent or header can indicate this)
   const now = Date.now();
   const timeSinceLastRead = now - lastReadTime;
-  
-  // CRITICAL: Only apply rate limiting if requests are too close together
-  // For zero check (typically 1s interval), this should rarely trigger
-  // This allows both zero check (1s) and weighing active (100ms) to coexist
   if (timeSinceLastRead < MIN_READ_INTERVAL) {
     // Return 429 with retry-after header
     res.setHeader('Retry-After', Math.ceil((MIN_READ_INTERVAL - timeSinceLastRead) / 1000));
     return res.status(429).json({ 
       success: false, 
       error: 'Too many requests. Please wait before reading again.',
-      retryAfter: Math.ceil((MIN_READ_INTERVAL - timeSinceLastRead) / 1000),
-      timeSinceLastRead: timeSinceLastRead,
-      minInterval: MIN_READ_INTERVAL
+      retryAfter: Math.ceil((MIN_READ_INTERVAL - timeSinceLastRead) / 1000)
     });
   }
   
@@ -2085,15 +2659,186 @@ app.get('/api/scale/read', async (req, res) => {
 
 
 // Printer XP420 Configuration
-const printerConfig = {
+const defaultPrinterConfig = {
   enabled: process.env.PRINTER_ENABLED === 'true' || true,
   type: 'usb', // USB connection
   port: process.env.PRINTER_PORT || 'Xprinter XP-420B', // Xprinter XP-420B as the actual printer name (with space)
   model: 'XP420',
   paperWidth: 100, // mm
   paperHeight: 72, // mm
-  format: process.env.PRINTER_FORMAT || 'ZPL' // ZPL only (Xprinter XP-420 compatible)
+  format: process.env.PRINTER_FORMAT || 'ZPL', // ZPL only (Xprinter XP-420 compatible)
+  autoDetect: true, // Enable auto-detect fallback printer
+  fallbackPrinters: [] // List of fallback printers detected during startup
 };
+
+// Load printer configuration from file
+function loadPrinterConfig() {
+  try {
+    if (fs.existsSync(PRINTER_CONFIG_FILE)) {
+      const data = fs.readFileSync(PRINTER_CONFIG_FILE, 'utf8');
+      const config = JSON.parse(data);
+      logToFile(`✅ Loaded printer config from: ${PRINTER_CONFIG_FILE}`);
+      return { ...defaultPrinterConfig, ...config };
+    }
+  } catch (error) {
+    logToFile(`⚠️  Failed to load printer config: ${error.message}, using defaults`);
+  }
+  return defaultPrinterConfig;
+}
+
+// Save printer configuration to file
+function savePrinterConfig(config) {
+  try {
+    fs.writeFileSync(PRINTER_CONFIG_FILE, JSON.stringify(config, null, 2), 'utf8');
+    logToFile(`✅ Saved printer config to: ${PRINTER_CONFIG_FILE}`);
+    return true;
+  } catch (error) {
+    logToFile(`❌ Failed to save printer config: ${error.message}`);
+    return false;
+  }
+}
+
+let printerConfig = loadPrinterConfig();
+
+// Auto-detect available thermal printers on startup
+async function autoDetectPrinter() {
+  if (process.platform !== 'win32') {
+    console.log('⚠️  Auto-detect printer hanya tersedia di Windows');
+    return null;
+  }
+
+  try {
+    console.log('🔍 Auto-detecting thermal printers...');
+    const { exec } = require('child_process');
+    const { promisify } = require('util');
+    const execAsync = promisify(exec);
+
+    const command = 'powershell -NoProfile -ExecutionPolicy Bypass -Command "Get-Printer | Select-Object Name, DriverName, PortName, PrinterStatus | ConvertTo-Json -Compress"';
+    const { stdout } = await execAsync(command, { timeout: 10000 });
+
+    if (stdout && stdout.trim() && stdout.trim() !== 'null') {
+      const printers = JSON.parse(stdout.trim());
+      const printerArray = Array.isArray(printers) ? printers : [printers];
+
+      // Filter out offline printers and "Copy" printers
+      // Also filter out virtual printers (PDF, OneNote, etc)
+      const virtualPrinterKeywords = ['pdf', 'onenote', 'anydesk', 'fax', 'xps'];
+      const onlinePrinters = printerArray.filter(p => {
+        if (!p || !p.Name) return false;
+        const nameLower = p.Name.toLowerCase();
+        
+        // Filter out virtual printers
+        if (virtualPrinterKeywords.some(k => nameLower.includes(k))) return false;
+        
+        // Filter out "Copy X" printers (duplicates)
+        if (p.Name.match(/\(copy\s*\d*\)/i)) return false;
+        
+        // Filter out offline/error printers
+        const status = (p.PrinterStatus || '').toString();
+        if (status.toLowerCase().includes('offline') || 
+            status.toLowerCase().includes('error') ||
+            status === '3' || // 3 = Offline in Windows
+            status === '5') { // 5 = Error
+          return false;
+        }
+        
+        return true;
+      });
+
+      console.log(`   📋 Found ${onlinePrinters.length} online printers (filtered from ${printerArray.length} total)`);
+
+      // Priority order: XP-420B, other thermal printers, Epson, any printer
+      const thermalKeywords = {
+        xprinter: ['xprinter', 'xp-420', 'xp420'],
+        epson: ['epson l', 'epson ecotank', 'epson tm-'],
+        thermal: ['thermal', 'label', 'zebra', 'zpl', 'tsc', 'godex']
+      };
+
+      // Helper function to find printer with preference for online and non-copy
+      const findBestPrinter = (candidates) => {
+        if (!candidates || candidates.length === 0) return null;
+        
+        // Sort by preference: online first, then non-copy, then alphabetically
+        candidates.sort((a, b) => {
+          // Prefer printers without "Copy" in name
+          const aCopy = a.Name.match(/\(copy\s*\d*\)/i) ? 1 : 0;
+          const bCopy = b.Name.match(/\(copy\s*\d*\)/i) ? 1 : 0;
+          if (aCopy !== bCopy) return aCopy - bCopy;
+          
+          // Prefer shorter names (original vs copy)
+          if (a.Name.length !== b.Name.length) return a.Name.length - b.Name.length;
+          
+          // Alphabetically
+          return a.Name.localeCompare(b.Name);
+        });
+        
+        return candidates[0];
+      };
+
+      // 1. Try to find XP-420B (preferred) - from online printers only
+      let candidates = onlinePrinters.filter(p => 
+        p.Name && thermalKeywords.xprinter.some(k => p.Name.toLowerCase().includes(k))
+      );
+      let detectedPrinter = findBestPrinter(candidates);
+
+      // 2. Fallback to other thermal printers
+      if (!detectedPrinter) {
+        candidates = onlinePrinters.filter(p => 
+          p.Name && thermalKeywords.thermal.some(k => p.Name.toLowerCase().includes(k))
+        );
+        detectedPrinter = findBestPrinter(candidates);
+      }
+
+      // 3. Fallback to Epson printers (can work with ZPL/ESC-POS compatibility)
+      if (!detectedPrinter) {
+        candidates = onlinePrinters.filter(p => 
+          p.Name && thermalKeywords.epson.some(k => p.Name.toLowerCase().includes(k))
+        );
+        detectedPrinter = findBestPrinter(candidates);
+      }
+
+      // 4. Last resort: use first available online printer
+      if (!detectedPrinter && onlinePrinters.length > 0) {
+        detectedPrinter = onlinePrinters[0];
+      }
+
+      if (detectedPrinter) {
+        const printerName = detectedPrinter.Name;
+        const printerPort = detectedPrinter.PortName || detectedPrinter.Name;
+        
+        console.log(`✅ Auto-detected printer: ${printerName} (Port: ${printerPort})`);
+        
+        // Update printer config with detected printer
+        if (printerConfig.autoDetect && printerConfig.port !== printerName) {
+          printerConfig.port = printerName;
+          printerConfig.detectedPort = printerPort;
+          printerConfig.detectedName = printerName;
+          printerConfig.fallbackPrinters = printerArray.map(p => ({
+            name: p.Name,
+            port: p.PortName || p.Name,
+            driver: p.DriverName
+          }));
+          
+          // Save updated config
+          savePrinterConfig(printerConfig);
+          console.log(`💾 Updated printer config with detected printer: ${printerName}`);
+        }
+
+        return {
+          name: printerName,
+          port: printerPort,
+          allPrinters: printerArray
+        };
+      }
+    }
+
+    console.log('⚠️  No printer detected');
+    return null;
+  } catch (error) {
+    console.warn(`⚠️  Auto-detect printer failed: ${error.message}`);
+    return null;
+  }
+}
 
 // Function to normalize printer port path (Windows)
 function normalizePrinterPort(port) {
@@ -2418,22 +3163,27 @@ async function sendToPrinterXP420_USB(receiptData, printerPort = null) {
             console.warn(`   Could not find printer info: ${err.message}`);
           }
           
-          const printerName = printerInfo.name;
-          const printerPort = printerInfo.port;
+          let printerName = printerInfo.name;
+          let printerPort = printerInfo.port;
+          
+          // FALLBACK: If configured printer not found, try detected printer from auto-detect
+          if (printerName === port && printerConfig.detectedName && printerConfig.detectedName !== port) {
+            console.log(`   ⚠️  Configured printer "${port}" not found, using detected printer instead`);
+            printerName = printerConfig.detectedName;
+            printerPort = printerConfig.detectedPort || printerConfig.detectedName;
+            console.log(`   📌 Fallback to: "${printerName}"`);
+          }
+          // FALLBACK 2: If still no printer found, try first fallback printer
+          else if (printerName === port && printerConfig.fallbackPrinters && printerConfig.fallbackPrinters.length > 0) {
+            const fallback = printerConfig.fallbackPrinters[0];
+            console.log(`   ⚠️  No printer found, using fallback: "${fallback.name}"`);
+            printerName = fallback.name;
+            printerPort = fallback.port || fallback.name;
+          }
           
           console.log(`   Target printer: "${printerName}"`);
           console.log(`   Printer port: "${printerPort}"`);
           console.log(`   Data size: ${receiptData.length} bytes`);
-          
-          // CRITICAL: Warn if printer might not support ZPL format
-          const printerNameLower = (printerName || '').toLowerCase();
-          const nonZPLKeywords = ['epson l', 'epson ecotank', 'inkjet', 'canon', 'hp deskjet', 'hp inkjet'];
-          if (nonZPLKeywords.some(keyword => printerNameLower.includes(keyword))) {
-            console.warn(`⚠️  WARNING: Printer "${printerName}" mungkin tidak mendukung ZPL format!`);
-            console.warn(`   ZPL (Zebra Programming Language) hanya didukung oleh thermal label printer.`);
-            console.warn(`   Printer yang kompatibel: Xprinter, Zebra, TSC, Godex, Argox, Brady, dll.`);
-            console.warn(`   Data akan dikirim, tapi printer mungkin tidak akan mencetak dengan benar.`);
-          }
           
           // Method 1: Use Windows Print API directly (most reliable, same as Win32 apps)
           console.log(`   Method 1: Windows Print API (Win32 RawPrinterHelper)...`);
@@ -3186,6 +3936,9 @@ app.post('/api/print/config', async (req, res) => {
       }
     }
 
+    // Save configuration to file
+    savePrinterConfig(printerConfig);
+
     res.json({
       success: true,
       message: 'Printer configuration updated',
@@ -3229,24 +3982,11 @@ app.post('/api/print/auto-configure', async (req, res) => {
             const printerArray = Array.isArray(printers) ? printers : [printers];
             
             // Filter thermal label printers (common models)
-            // CRITICAL: Only include Epson thermal printers, not all Epson printers (Epson L3210 is inkjet, not thermal)
-            const thermalKeywords = ['xprinter', 'xp-420', 'thermal', 'label', 'zebra', 'zpl', 'tm-', 'epson tm-', 'epson thermal'];
-            const excludeKeywords = ['epson l', 'epson ecotank', 'epson inkjet']; // Exclude non-thermal Epson printers
+            const thermalKeywords = ['xprinter', 'xp-420', 'thermal', 'label', 'zebra', 'zpl', 'epson', 'tm-'];
             const thermalPrinters = printerArray.filter(p => {
               if (!p || !p.Name) return false;
               const nameLower = p.Name.toLowerCase();
-              // Exclude non-thermal printers first
-              if (excludeKeywords.some(keyword => nameLower.includes(keyword))) {
-                return false;
-              }
-              // Then check if it's a thermal printer
               return thermalKeywords.some(keyword => nameLower.includes(keyword));
-            });
-            
-            // Prioritize Xprinter if available
-            const xprinterPrinters = thermalPrinters.filter(p => {
-              const nameLower = (p.Name || p.name || '').toLowerCase();
-              return nameLower.includes('xprinter') || nameLower.includes('xp-420');
             });
             
             results.windowsPrinters = printerArray.map(p => ({
@@ -3257,17 +3997,8 @@ app.post('/api/print/auto-configure', async (req, res) => {
               isThermal: thermalKeywords.some(k => (p.Name || p.name || '').toLowerCase().includes(k))
             }));
             
-            // Recommend Xprinter first if available, otherwise first thermal printer
-            if (xprinterPrinters.length > 0) {
-              results.recommended = {
-                method: 'windows-raw',
-                printerName: xprinterPrinters[0].Name || xprinterPrinters[0].name,
-                labelWidth: 72,  // Default thermal label size
-                labelHeight: 100,
-                labelDPI: 203
-              };
-              results.detectedMethods.push('windows-raw');
-            } else if (thermalPrinters.length > 0) {
+            // Recommend first thermal printer or first available printer
+            if (thermalPrinters.length > 0) {
               results.recommended = {
                 method: 'windows-raw',
                 printerName: thermalPrinters[0].Name || thermalPrinters[0].name,
@@ -3660,9 +4391,7 @@ app.post('/api/print/weighing-receipt', async (req, res) => {
       labelWidth,  // Label width in mm (default: 72mm)
       labelHeight, // Label height in mm (default: 100mm)
       labelDPI,    // Label DPI (default: 203)
-      layout,
-      skipPrintHistory = false, // Flag to skip saving to print_history (for individual prints)
-      sessionTime = null // Session time (use this instead of current time if provided)
+      layout
     } = req.body;
 
     // Validate required fields
@@ -3674,15 +4403,14 @@ app.post('/api/print/weighing-receipt', async (req, res) => {
       });
     }
 
-    // Use session time if provided, otherwise use current time
-    const timeToUse = sessionTime ? new Date(sessionTime) : new Date();
-    const now = timeToUse; // Alias for clarity - use this timestamp for all time-related operations
-    const dateStr = timeToUse.toLocaleDateString('id-ID', { 
+    // Get current time
+    const now = new Date();
+    const dateStr = now.toLocaleDateString('id-ID', { 
       day: '2-digit', 
       month: '2-digit', 
       year: 'numeric' 
     });
-    const timeStr = timeToUse.toLocaleTimeString('id-ID', { 
+    const timeStr = now.toLocaleTimeString('id-ID', { 
       hour: '2-digit', 
       minute: '2-digit', 
       second: '2-digit' 
@@ -3826,35 +4554,30 @@ app.post('/api/print/weighing-receipt', async (req, res) => {
       }
 
       // Insert print history (async - don't block response)
-      // Only save to print_history if skipPrintHistory is false (for batch printing)
-      if (!skipPrintHistory) {
-        pool.query(
-          `INSERT INTO print_history (
-            work_order_id, work_order, ingredient_id, ingredient_name, sku_name,
-            current_weight, target_weight, remaining_weight, operator_name, mo_number,
-            print_data, weighing_time, printed_at
-          ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)`,
-          [
-            workOrderId,
-            moNumber || 'N/A',
-            ingredientId,
-            ingredientName,
-            skuName,
-            currentWeight,
-            targetWeight || 0, // Use 0 if not provided (removed from format)
-            remainingWeight || 0, // Use 0 if not provided (removed from format)
-            operatorName || 'Operator',
-            moNumber || null,
-            JSON.stringify(printDataJson),
-            now,
-            now
-          ]
-        ).catch(err => {
-          console.warn('⚠️  Failed to save print history (non-critical):', err.message);
-        });
-      } else {
-        console.log('📋 Skipping print history save (individual print)');
-      }
+      pool.query(
+        `INSERT INTO print_history (
+          work_order_id, work_order, ingredient_id, ingredient_name, sku_name,
+          current_weight, target_weight, remaining_weight, operator_name, mo_number,
+          print_data, weighing_time, printed_at
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)`,
+        [
+          workOrderId,
+          moNumber || 'N/A',
+          ingredientId,
+          ingredientName,
+          skuName,
+          currentWeight,
+          targetWeight || 0, // Use 0 if not provided (removed from format)
+          remainingWeight || 0, // Use 0 if not provided (removed from format)
+          operatorName || 'Operator',
+          moNumber || null,
+          JSON.stringify(printDataJson),
+          now,
+          now
+        ]
+      ).catch(err => {
+        console.warn('⚠️  Failed to save print history (non-critical):', err.message);
+      });
     } catch (saveError) {
       // Non-critical error - don't block print response
       console.warn('⚠️  Error saving print history (non-critical):', saveError.message);
@@ -3993,6 +4716,8 @@ app.get('/api/formulations/:id/ingredients', async (req, res) => {
       LEFT JOIN master_product mp ON mfi.product_id = mp.id
       LEFT JOIN master_tolerance_grouping mtg ON mp.tolerance_grouping_id = mtg.id
       WHERE mfi.formulation_id = $1
+        AND COALESCE(mfi.is_active, true) = true
+        AND COALESCE(mp.status, 'active') = 'active'
       ORDER BY COALESCE(mfi.sequence_order, 999999), mfi.created_at ASC
     `;
     
@@ -4072,7 +4797,7 @@ app.post('/api/weighing/save-progress', async (req, res) => {
       });
     }
     
-    const { moNumber, formulationId, ingredients, progress } = req.body || {};
+    const { moNumber, formulationId, ingredients, progress, operatorName, operatorId } = req.body || {};
     
     // Validate required fields with detailed error messages
     if (!moNumber) {
@@ -4119,6 +4844,7 @@ app.post('/api/weighing/save-progress', async (req, res) => {
     
     console.log(`💾 Saving weighing progress for MO: ${moNumber}, Formulation: ${formulationId}`);
     console.log(`   Ingredients count: ${ingredients.length}`);
+    console.log(`   Operator: ${operatorName || 'Unknown'} (ID: ${operatorId || 'not provided'})`);
     
     // Start transaction
     try {
@@ -4133,18 +4859,57 @@ app.post('/api/weighing/save-progress', async (req, res) => {
       });
     }
     
-    // Get a default user for created_by (required field)
+    // Get user ID for created_by (required field)
+    // Priority: 1) operatorId from request, 2) lookup by operatorName, 3) default first user
     let createdBy = null;
-    try {
-      const userResult = await pool.query('SELECT id FROM master_user ORDER BY created_at ASC LIMIT 1');
-      if (userResult.rows.length > 0) {
-        createdBy = userResult.rows[0].id;
-      } else {
-        throw new Error('No users found in master_user table. Please create a user first.');
+    
+    // Try to use operatorId from request if provided
+    if (operatorId) {
+      try {
+        const userCheckResult = await pool.query('SELECT id FROM master_user WHERE id = $1 AND status = $2', [operatorId, 'active']);
+        if (userCheckResult.rows.length > 0) {
+          createdBy = userCheckResult.rows[0].id;
+          console.log(`✅ Using operator from request: ${operatorName} (ID: ${createdBy})`);
+        } else {
+          console.warn(`⚠️  Operator ID ${operatorId} not found or inactive, will try lookup by name`);
+        }
+      } catch (userCheckError) {
+        console.warn(`⚠️  Error checking operator ID: ${userCheckError.message}`);
       }
-    } catch (userError) {
-      console.error('❌ Error getting user for work order:', userError.message);
-      throw new Error(`Cannot create work order: ${userError.message}. Please ensure at least one user exists in master_user table.`);
+    }
+    
+    // If operatorId not found, try to lookup by operatorName
+    if (!createdBy && operatorName) {
+      try {
+        const userLookupResult = await pool.query(
+          'SELECT id FROM master_user WHERE (name = $1 OR username = $1) AND status = $2 LIMIT 1',
+          [operatorName, 'active']
+        );
+        if (userLookupResult.rows.length > 0) {
+          createdBy = userLookupResult.rows[0].id;
+          console.log(`✅ Found operator by name: ${operatorName} (ID: ${createdBy})`);
+        } else {
+          console.warn(`⚠️  Operator name "${operatorName}" not found in database, using default user`);
+        }
+      } catch (userLookupError) {
+        console.warn(`⚠️  Error looking up operator by name: ${userLookupError.message}`);
+      }
+    }
+    
+    // Fallback to default user if operator not found
+    if (!createdBy) {
+      try {
+        const userResult = await pool.query('SELECT id FROM master_user ORDER BY created_at ASC LIMIT 1');
+        if (userResult.rows.length > 0) {
+          createdBy = userResult.rows[0].id;
+          console.warn(`⚠️  Using default user (ID: ${createdBy}) as operator not found`);
+        } else {
+          throw new Error('No users found in master_user table. Please create a user first.');
+        }
+      } catch (userError) {
+        console.error('❌ Error getting user for work order:', userError.message);
+        throw new Error(`Cannot create work order: ${userError.message}. Please ensure at least one user exists in master_user table.`);
+      }
     }
     
     if (!createdBy) {
@@ -4442,14 +5207,14 @@ app.post('/api/weighing/save-progress', async (req, res) => {
               sessionStatus = 'weighing';
             }
             
-            // Store expiration date if available (from ingredient.expDate)
-            // Store as JSON array in notes field to support multiple exp dates per ingredient
-            let expDatesArray = [];
-            if (ingredient.expDate) {
-              expDatesArray = [ingredient.expDate]; // Single exp date for this session
+            // Get exp_date from ingredient if available (from scan modal verify product)
+            const expDate = ingredient.expDate || ingredient.exp_date || null;
+            
+            // Store exp_date in notes as JSON for easy retrieval
+            let sessionNotes = null;
+            if (expDate) {
+              sessionNotes = JSON.stringify({ exp_date: expDate });
             }
-            // Also check if there are existing exp dates in notes (for aggregation)
-            // This will be handled when retrieving data in history API
             
             const sessionQuery = `
               INSERT INTO weighing_sessions (
@@ -4468,11 +5233,6 @@ app.post('/api/weighing/save-progress', async (req, res) => {
               ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, CURRENT_TIMESTAMP, $11)
             `;
             
-            // Store exp date in notes as JSON if available
-            const notesValue = expDatesArray.length > 0 
-              ? JSON.stringify({ exp_dates: expDatesArray })
-              : null;
-            
             await pool.query(sessionQuery, [
               workOrderId,
               sessionNumber,
@@ -4484,7 +5244,7 @@ app.post('/api/weighing/save-progress', async (req, res) => {
               toleranceMin,
               toleranceMax,
               weighedByUserId,
-              notesValue // Store exp dates in notes as JSON
+              sessionNotes // Store exp_date in notes as JSON
             ]);
             
             // Store session number for this ingredient (for print data)
@@ -4724,34 +5484,13 @@ app.post('/api/weighing/save-progress', async (req, res) => {
         // Get expDate from savedIngredient if available
         const expDate = savedIngredient.expDate || savedIngredient.exp_date || null;
         
-        // Get operator name from work order (join with master_user)
-        let operatorName = 'Operator'; // Default fallback
-        try {
-          const operatorQuery = await pool.query(
-            `SELECT 
-              COALESCE(mu.username, mu.name, 'Unknown') as operator_name,
-              mu.name as operator_full_name
-            FROM work_orders wo
-            LEFT JOIN master_user mu ON wo.created_by = mu.id
-            WHERE wo.id = $1
-            LIMIT 1`,
-            [workOrderId]
-          );
-          if (operatorQuery.rows.length > 0 && operatorQuery.rows[0].operator_name) {
-            // Use operator_full_name (name) if available, otherwise use operator_name (username)
-            operatorName = operatorQuery.rows[0].operator_full_name || operatorQuery.rows[0].operator_name || 'Operator';
-          }
-        } catch (operatorError) {
-          console.warn('⚠️ Could not fetch operator name from DB, using default:', operatorError.message);
-        }
-        
         printData = {
           skuName: skuName,
           ingredientName: ingredientName,
           currentWeight: currentReading, // Current scale reading being saved
           targetWeight: targetMass, // SCALED target weight
           remainingWeight: remainingWeight, // Based on accumulated mass
-          operatorName: operatorName, // Get from work order (created_by -> master_user)
+          operatorName: operatorName || 'Operator', // Use operator name from request, fallback to default
           moNumber: workOrderNumber || moNumber || null, // MO number for barcode (use workOrderNumber if available, fallback to moNumber)
           sessionNumber: sessionNumberForPrint, // CRITICAL: Include session number that was just created
           expDate: expDate // Expiration date for the ingredient
@@ -4976,6 +5715,403 @@ app.post('/api/weighing/complete', async (req, res) => {
     res.status(500).json({
       success: false,
       error: 'Failed to complete weighing',
+      details: error.message
+    });
+  }
+});
+
+// Endpoint to send weighing data to external API/VPS
+app.post('/api/weighing/send-to-external', async (req, res) => {
+  try {
+    const { workOrder, ingredients, apiConfig } = req.body;
+
+    // Validate required fields
+    if (!workOrder) {
+      return res.status(400).json({
+        success: false,
+        error: 'Missing required field: workOrder'
+      });
+    }
+
+    if (!apiConfig) {
+      return res.status(400).json({
+        success: false,
+        error: 'Missing required field: apiConfig'
+      });
+    }
+
+    // Validate API config
+    if (!apiConfig.apiReportingEnabled) {
+      return res.status(400).json({
+        success: false,
+        error: 'API Reporting is not enabled'
+      });
+    }
+
+    if (!apiConfig.apiReportingUrl) {
+      return res.status(400).json({
+        success: false,
+        error: 'API Reporting URL is not configured'
+      });
+    }
+
+    // Parse headers if provided as JSON string
+    let headers = {
+      'Content-Type': 'application/json'
+    };
+
+    if (apiConfig.apiReportingHeaders) {
+      try {
+        const parsedHeaders = typeof apiConfig.apiReportingHeaders === 'string'
+          ? JSON.parse(apiConfig.apiReportingHeaders)
+          : apiConfig.apiReportingHeaders;
+        
+        headers = {
+          ...headers,
+          ...parsedHeaders
+        };
+      } catch (parseError) {
+        console.warn('⚠️  Failed to parse API reporting headers, using defaults:', parseError.message);
+      }
+    }
+
+    // Build full URL
+    let baseUrl = apiConfig.apiReportingUrl.replace(/\/$/, ''); // Remove trailing slash
+    // Ensure URL has protocol
+    if (!baseUrl.match(/^https?:\/\//)) {
+      baseUrl = `http://${baseUrl}`;
+    }
+    const endpoint = (apiConfig.apiReportingEndpoint || '').replace(/^\//, ''); // Remove leading slash
+    const fullUrl = `${baseUrl}${endpoint ? '/' + endpoint : ''}`;
+    
+    // Log endpoint configuration for debugging (early logging)
+    console.log(`\n🔧 API Reporting Configuration:`);
+    console.log(`   Base URL: ${apiConfig.apiReportingUrl}`);
+    console.log(`   Endpoint: ${apiConfig.apiReportingEndpoint || '(empty - using default /api/weighing-data)'}`);
+    console.log(`   Method: ${apiConfig.apiReportingMethod || 'POST'}`);
+    console.log(`   Full URL: ${fullUrl}`);
+    
+    // Warn if using default endpoint
+    if (!apiConfig.apiReportingEndpoint || apiConfig.apiReportingEndpoint.trim() === '') {
+      console.warn(`⚠️  WARNING: No endpoint specified! Using base URL only: ${baseUrl}`);
+      console.warn(`   Please configure the endpoint in Settings > API Reporting`);
+    }
+
+    // Determine HTTP method (default to POST)
+    const method = (apiConfig.apiReportingMethod || 'POST').toUpperCase();
+
+    // Format data according to report summary format from history detail
+    // This matches the format shown in the history detail report
+    // Helper function to format date to ISO string
+    const formatDate = (dateValue) => {
+      if (!dateValue) return null;
+      if (dateValue instanceof Date) {
+        return dateValue.toISOString();
+      }
+      if (typeof dateValue === 'string') {
+        // If already ISO string, return as is
+        if (dateValue.includes('T') || dateValue.includes('Z')) {
+          return dateValue;
+        }
+        // Try to parse and convert
+        const parsed = new Date(dateValue);
+        if (!isNaN(parsed.getTime())) {
+          return parsed.toISOString();
+        }
+        return dateValue;
+      }
+      return dateValue;
+    };
+
+    // Format ingredients to match history detail format exactly
+    // This ensures API external format is identical to report history format
+    const formatIngredients = (ingredientsArray) => {
+      if (!ingredientsArray || !Array.isArray(ingredientsArray)) {
+        return [];
+      }
+
+      return ingredientsArray.map(ing => {
+        // Format sessions if they exist
+        // Match history detail format exactly - use raw timestamps from database (not formatted)
+        const formattedSessions = (ing.sessions && Array.isArray(ing.sessions)) 
+          ? ing.sessions.map(session => ({
+              session_id: session.session_id || null,
+              session_number: session.session_number || null,
+              actual_mass: parseFloat(session.actual_mass || 0),
+              accumulated_mass: parseFloat(session.accumulated_mass || 0),
+              status: session.status || null,
+              tolerance_min: session.tolerance_min ? parseFloat(session.tolerance_min) : null,
+              tolerance_max: session.tolerance_max ? parseFloat(session.tolerance_max) : null,
+              session_started_at: session.session_started_at || null, // Raw timestamp (matching history detail)
+              session_completed_at: session.session_completed_at || null, // Raw timestamp (matching history detail)
+              notes: session.notes || null,
+              exp_date: session.exp_date || null // Include exp_date from scan modal verify product
+            }))
+          : [];
+
+        // Group sessions by exp_date and calculate total weight per exp_date
+        // This matches the exp_dates array format from history detail
+        const expDatesMap = new Map(); // Map<exp_date, {exp_date, actual_weight}>
+        
+        formattedSessions.forEach(session => {
+          const expDate = session.exp_date || null; // null if no exp_date
+          const sessionWeight = parseFloat(session.actual_mass || 0);
+          
+          if (!expDatesMap.has(expDate)) {
+            expDatesMap.set(expDate, {
+              exp_date: expDate,
+              actual_weight: 0
+            });
+          }
+          
+          const expDateData = expDatesMap.get(expDate);
+          expDateData.actual_weight += sessionWeight;
+        });
+        
+        // Convert map to array for exp_dates (matching history detail format)
+        let exp_dates = [];
+        if (expDatesMap.size > 0) {
+          exp_dates = Array.from(expDatesMap.values()).map(expData => ({
+            exp_date: expData.exp_date,
+            actual_weight: expData.actual_weight
+          }));
+        } else {
+          // No sessions, create single entry with null exp_date and total accumulated mass
+          exp_dates = [{
+            exp_date: null,
+            actual_weight: parseFloat(ing.current_accumulated_mass || 0)
+          }];
+        }
+
+        // Return format matching history detail exactly
+        return {
+          ingredient_id: ing.ingredient_id || null,
+          ingredient_code: ing.ingredient_code || '',
+          ingredient_name: ing.ingredient_name || '',
+          target_mass: ing.target_mass ? parseFloat(ing.target_mass) : 0,
+          current_accumulated_mass: ing.current_accumulated_mass ? parseFloat(ing.current_accumulated_mass) : 0,
+          current_status: ing.current_status || 'pending',
+          tolerance_min: ing.tolerance_min ? parseFloat(ing.tolerance_min) : null,
+          tolerance_max: ing.tolerance_max ? parseFloat(ing.tolerance_max) : null,
+          sessions: formattedSessions, // All sessions for this ingredient
+          exp_dates: exp_dates // Array of exp_dates with weights (matching history detail format)
+        };
+      });
+    };
+
+    // Format payload to match history detail format exactly
+    // Use same structure as /api/history/:mo response
+    // Keep timestamps in raw format (as from database) to match history detail exactly
+    const payload = {
+      work_order: workOrder.work_order || workOrder.work_order_number || null, // Add work_order at root level for API
+      workOrder: {
+        id: workOrder.id || null,
+        work_order: workOrder.work_order || workOrder.work_order_number || null,
+        formulation_id: workOrder.formulation_id || null,
+        planned_quantity: workOrder.planned_quantity ? parseFloat(workOrder.planned_quantity) : null,
+        status: workOrder.status || null,
+        production_date: workOrder.production_date || workOrder.created_at || null, // Raw timestamp (matching history detail)
+        end_time: workOrder.end_time || workOrder.completed_at || null, // Raw timestamp (matching history detail)
+        opened_at: workOrder.opened_at || null, // Raw timestamp (matching history detail)
+        formulation_name: workOrder.formulation_name || 'Unknown',
+        sku: workOrder.sku || workOrder.formulation_code || '',
+        operator_name: workOrder.operator_name || workOrder.operator_full_name || 'Unknown',
+        operator_full_name: workOrder.operator_full_name || workOrder.operator_name || 'Unknown'
+      },
+      ingredients: formatIngredients(ingredients), // Format ingredients matching history detail
+      reject_reason: null // Can be added if needed in the future
+    };
+
+    // Prepare request data
+    const requestData = JSON.stringify(payload);
+
+    // Parse URL to determine protocol
+    const parsedUrl = url.parse(fullUrl);
+    const isHttps = parsedUrl.protocol === 'https:';
+    const httpModule = isHttps ? https : http;
+
+    // Check if this is localhost or development environment
+    const isLocalhost = parsedUrl.hostname === 'localhost' || 
+                       parsedUrl.hostname === '127.0.0.1' ||
+                       parsedUrl.hostname.startsWith('192.168.') ||
+                       parsedUrl.hostname.startsWith('10.') ||
+                       parsedUrl.hostname.startsWith('172.');
+
+    // Make HTTP request to external API
+    const requestOptions = {
+      hostname: parsedUrl.hostname,
+      port: parsedUrl.port || (isHttps ? 443 : 80),
+      path: parsedUrl.path,
+      method: method,
+      headers: {
+        ...headers,
+        'Content-Length': Buffer.byteLength(requestData)
+      }
+    };
+
+    // For HTTPS requests, add SSL options
+    // Disable SSL verification for localhost/development (not recommended for production)
+    if (isHttps) {
+      requestOptions.rejectUnauthorized = !isLocalhost; // Only reject unauthorized for non-localhost
+      if (isLocalhost) {
+        console.log('⚠️  SSL verification disabled for localhost (development mode)');
+      }
+    }
+
+    console.log(`📤 Sending weighing data to external API: ${method} ${fullUrl}`);
+    console.log(`   Protocol: ${isHttps ? 'HTTPS' : 'HTTP'}`);
+    console.log(`   Host: ${parsedUrl.hostname}:${parsedUrl.port || (isHttps ? 443 : 80)}`);
+    if (isHttps && isLocalhost) {
+      console.log(`   ⚠️  Using HTTPS to localhost - SSL verification disabled`);
+    }
+    console.log(`   Work Order: ${payload.work_order || 'N/A'}`);
+    console.log(`   Ingredients count: ${payload.ingredients.length}`);
+    
+    // Log detailed ingredients info
+    payload.ingredients.forEach((ing, idx) => {
+      console.log(`   Ingredient ${idx + 1}: ${ing.ingredient_name} (${ing.ingredient_code})`);
+      console.log(`     - Target: ${ing.target_mass}g, Actual: ${ing.current_accumulated_mass}g, Status: ${ing.current_status}`);
+      console.log(`     - Sessions: ${ing.sessions.length}`);
+      if (ing.sessions.length > 0) {
+        ing.sessions.forEach((session, sidx) => {
+          console.log(`       Session ${sidx + 1}: #${session.session_number} - ${session.actual_mass}g (${session.status})`);
+        });
+      }
+    });
+    
+    console.log(`   Payload size: ${JSON.stringify(payload).length} bytes`);
+
+    return new Promise((resolve) => {
+      const req = httpModule.request(requestOptions, (response) => {
+        // Set timeout for the request
+        req.setTimeout(30000, () => {
+          console.error('❌ Timeout sending data to external API');
+          req.destroy();
+          if (!res.headersSent) {
+            res.status(500).json({
+              success: false,
+              error: 'Request timeout',
+              details: 'External API did not respond within 30 seconds',
+              url: fullUrl
+            });
+          }
+          resolve();
+        });
+        let responseData = '';
+
+        response.on('data', (chunk) => {
+          responseData += chunk;
+        });
+
+        response.on('end', () => {
+          if (response.statusCode >= 200 && response.statusCode < 300) {
+            console.log(`✅ Successfully sent data to external API (Status: ${response.statusCode})`);
+            res.json({
+              success: true,
+              message: 'Data berhasil dikirim ke API eksternal',
+              url: fullUrl,
+              statusCode: response.statusCode,
+              response: responseData ? (() => {
+                try {
+                  return JSON.parse(responseData);
+                } catch {
+                  return responseData;
+                }
+              })() : null
+            });
+            resolve();
+          } else {
+            // Parse error response if possible
+            let errorDetails = responseData || response.statusMessage;
+            try {
+              const parsedError = JSON.parse(responseData);
+              errorDetails = parsedError;
+            } catch (e) {
+              // Keep as string if not JSON
+            }
+            
+            console.error(`❌ External API returned error status: ${response.statusCode}`);
+            console.error(`   Requested URL: ${fullUrl}`);
+            console.error(`   Endpoint used: ${apiConfig.apiReportingEndpoint || '(empty - check Settings)'}`);
+            console.error(`   Error details:`, errorDetails);
+            
+            // Provide helpful error message for 404
+            let helpfulMessage = errorDetails;
+            if (response.statusCode === 404) {
+              helpfulMessage = `Endpoint not found: ${fullUrl}\n\n`;
+              helpfulMessage += `Please verify:\n`;
+              helpfulMessage += `1. The endpoint "${apiConfig.apiReportingEndpoint || '(empty)'}" is correct\n`;
+              helpfulMessage += `2. The endpoint exists on the server\n`;
+              helpfulMessage += `3. The endpoint is configured in Settings > API Reporting\n\n`;
+              helpfulMessage += `Current configuration:\n`;
+              helpfulMessage += `- Base URL: ${apiConfig.apiReportingUrl}\n`;
+              helpfulMessage += `- Endpoint: ${apiConfig.apiReportingEndpoint || '(not set)'}\n`;
+              helpfulMessage += `- Full URL: ${fullUrl}`;
+            }
+            
+            res.status(500).json({
+              success: false,
+              error: `External API returned error status: ${response.statusCode}`,
+              details: helpfulMessage,
+              url: fullUrl,
+              endpoint: apiConfig.apiReportingEndpoint || null,
+              statusCode: response.statusCode
+            });
+            resolve();
+          }
+        });
+      });
+
+      req.on('error', (error) => {
+        console.error('❌ Error sending data to external API:', error.message);
+        
+        // Provide more helpful error messages
+        let errorMessage = 'Failed to connect to external API';
+        let errorDetails = error.message;
+        
+        if (error.message.includes('EPROTO') || error.message.includes('SSL') || error.message.includes('TLS') || error.message.includes('packet length')) {
+          errorMessage = 'SSL/TLS connection error';
+          errorDetails = `SSL error: ${error.message}. `;
+          if (isHttps && isLocalhost) {
+            if (error.message.includes('packet length')) {
+              errorDetails += 'This error usually means the server is using HTTP, not HTTPS. ';
+              errorDetails += `Please change the URL from "https://localhost:${parsedUrl.port || 443}" to "http://localhost:${parsedUrl.port || 80}" in API Reporting settings.`;
+            } else {
+              errorDetails += 'If the server uses HTTP (not HTTPS), please change the URL to use http:// instead of https://';
+            }
+          } else if (isHttps) {
+            errorDetails += 'The server may not support HTTPS or the SSL certificate is invalid.';
+          }
+        } else if (error.message.includes('ECONNREFUSED')) {
+          errorMessage = 'Connection refused';
+          errorDetails = `Cannot connect to ${parsedUrl.hostname}:${parsedUrl.port || (isHttps ? 443 : 80)}. Please check if the server is running and the URL is correct.`;
+        } else if (error.message.includes('ENOTFOUND')) {
+          errorMessage = 'Host not found';
+          errorDetails = `Cannot resolve hostname: ${parsedUrl.hostname}. Please check the URL.`;
+        }
+        
+        res.status(500).json({
+          success: false,
+          error: errorMessage,
+          details: errorDetails,
+          url: fullUrl,
+          protocol: isHttps ? 'HTTPS' : 'HTTP',
+          hostname: parsedUrl.hostname,
+          port: parsedUrl.port || (isHttps ? 443 : 80)
+        });
+        resolve();
+      });
+
+
+      // Send request data
+      req.write(requestData);
+      req.end();
+    });
+  } catch (error) {
+    console.error('❌ Error in send-to-external endpoint:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to send data to external API',
       details: error.message
     });
   }
@@ -5418,6 +6554,8 @@ app.get('/api/history/:mo', async (req, res) => {
       JOIN master_product mp ON mfi.product_id = mp.id
       LEFT JOIN weighing_progress wp ON wp.work_order_id = $1 AND wp.ingredient_id = mfi.id
       WHERE mfi.formulation_id = $2
+        -- For existing WO: include all ingredients (active and inactive) to preserve history
+        -- This allows viewing complete history even if ingredients were deactivated
       ORDER BY COALESCE(mfi.sequence_order, 999999), mfi.created_at ASC
     `;
     
@@ -5445,17 +6583,35 @@ app.get('/api/history/:mo', async (req, res) => {
     
     const sessionsResult = await pool.query(sessionsQuery, [wo.id]);
     
-    // Group sessions by ingredient_id and collect expiration dates
+    // Group sessions by ingredient_id
     const sessionsByIngredient = new Map();
-    // Map to store exp dates with their actual weights: ingredient_id -> Map(expDate -> totalWeight)
-    const expDatesWithWeights = new Map();
-    
     sessionsResult.rows.forEach(session => {
       const ingId = session.ingredient_id;
       if (!sessionsByIngredient.has(ingId)) {
         sessionsByIngredient.set(ingId, []);
-        expDatesWithWeights.set(ingId, new Map()); // Map(expDate -> totalWeight)
       }
+      
+      // Parse notes to extract exp_date if stored as JSON
+      // exp_date comes from scan modal verify product (ProductVerification.jsx)
+      let expDate = null;
+      if (session.notes) {
+        try {
+          // Try to parse notes as JSON to extract exp_date
+          const notesData = JSON.parse(session.notes);
+          if (notesData.exp_date || notesData.expDate) {
+            expDate = notesData.exp_date || notesData.expDate;
+          }
+        } catch (e) {
+          // If notes is not JSON, check if it's a plain text exp_date format (dd/mm/yyyy)
+          // Some implementations might store exp_date directly in notes
+          const expDatePattern = /(\d{2}\/\d{2}\/\d{4})/;
+          const match = session.notes.match(expDatePattern);
+          if (match) {
+            expDate = match[1];
+          }
+        }
+      }
+      
       sessionsByIngredient.get(ingId).push({
         session_id: session.session_id,
         session_number: session.session_number,
@@ -5466,83 +6622,54 @@ app.get('/api/history/:mo', async (req, res) => {
         tolerance_max: parseFloat(session.tolerance_max || 0),
         session_started_at: session.session_started_at,
         session_completed_at: session.session_completed_at,
-        notes: session.notes
+        notes: session.notes,
+        exp_date: expDate // Include exp_date from scan modal verify product
       });
-      
-      // Extract expiration dates from notes field and accumulate weights per exp date
-      const sessionActualMass = parseFloat(session.actual_mass || 0);
-      let expDateFound = false;
-      
-      if (session.notes) {
-        try {
-          const notesData = JSON.parse(session.notes);
-          if (notesData && notesData.exp_dates && Array.isArray(notesData.exp_dates) && notesData.exp_dates.length > 0) {
-            notesData.exp_dates.forEach(expDate => {
-              if (expDate) {
-                expDateFound = true;
-                const expDateMap = expDatesWithWeights.get(ingId);
-                const currentWeight = expDateMap.get(expDate) || 0;
-                expDateMap.set(expDate, currentWeight + sessionActualMass);
-              }
-            });
-          }
-        } catch (e) {
-          // If notes is not JSON, check if notes itself is an exp date (for backward compatibility)
-          if (session.notes && session.notes.match(/^\d{2}\/\d{2}\/\d{4}$/)) {
-            expDateFound = true;
-            const expDateMap = expDatesWithWeights.get(ingId);
-            const currentWeight = expDateMap.get(session.notes) || 0;
-            expDateMap.set(session.notes, currentWeight + sessionActualMass);
-          }
-        }
-      }
-      
-      // If no exp date found in notes, use '-' as default and accumulate weight
-      if (!expDateFound && sessionActualMass > 0) {
-        const expDateMap = expDatesWithWeights.get(ingId);
-        const currentWeight = expDateMap.get('-') || 0;
-        expDateMap.set('-', currentWeight + sessionActualMass);
-      }
     });
     
     // Build ingredients array with all ingredients from formulation
     const ingredients = allIngredientsResult.rows.map(row => {
-      const ingId = row.ingredient_id;
-      const expDatesMap = expDatesWithWeights.get(ingId) || new Map();
+      const sessions = sessionsByIngredient.get(row.ingredient_id) || [];
       
-      // Convert Map to array of objects with exp_date and actual_weight
-      // If no exp dates found, use total accumulated mass with '-' exp date
-      let expDatesArray = [];
-      if (expDatesMap.size > 0) {
-        expDatesArray = Array.from(expDatesMap.entries())
-          .map(([expDate, actualWeight]) => ({
+      // Group sessions by exp_date and calculate total weight per exp_date
+      // This allows multiple rows per ingredient if there are different exp_dates
+      const expDatesMap = new Map(); // Map<exp_date, {exp_date, actual_weight, sessions}>
+      
+      sessions.forEach(session => {
+        const expDate = session.exp_date || null; // null if no exp_date
+        const sessionWeight = parseFloat(session.actual_mass || 0);
+        
+        if (!expDatesMap.has(expDate)) {
+          expDatesMap.set(expDate, {
             exp_date: expDate,
-            actual_weight: actualWeight
-          }))
-          .sort((a, b) => {
-            // Sort by exp date (if not '-')
-            if (a.exp_date === '-') return 1;
-            if (b.exp_date === '-') return -1;
-            return a.exp_date.localeCompare(b.exp_date);
+            actual_weight: 0,
+            sessions: []
           });
-      } else {
-        // No exp dates found, use total accumulated mass with '-' exp date
-        const totalMass = parseFloat(row.current_accumulated_mass || 0);
-        if (totalMass > 0) {
-          expDatesArray = [{
-            exp_date: '-',
-            actual_weight: totalMass
-          }];
-        } else {
-          expDatesArray = [{
-            exp_date: '-',
-            actual_weight: 0
-          }];
         }
+        
+        const expDateData = expDatesMap.get(expDate);
+        expDateData.actual_weight += sessionWeight;
+        expDateData.sessions.push(session);
+      });
+      
+      // Convert map to array for exp_dates
+      // If no sessions or no exp_dates, create single entry with null exp_date
+      let exp_dates = [];
+      if (expDatesMap.size > 0) {
+        exp_dates = Array.from(expDatesMap.values()).map(expData => ({
+          exp_date: expData.exp_date,
+          actual_weight: expData.actual_weight
+        }));
+      } else {
+        // No sessions, create single entry with null exp_date and total accumulated mass
+        exp_dates = [{
+          exp_date: null,
+          actual_weight: parseFloat(row.current_accumulated_mass || 0)
+        }];
       }
       
       return {
-        ingredient_id: ingId,
+        ingredient_id: row.ingredient_id,
         ingredient_code: row.product_code,
         ingredient_name: row.ingredient_name,
         target_mass: parseFloat(row.target_mass || 0),
@@ -5550,8 +6677,8 @@ app.get('/api/history/:mo', async (req, res) => {
         current_status: row.current_status,
         tolerance_min: row.tolerance_min ? parseFloat(row.tolerance_min) : null,
         tolerance_max: row.tolerance_max ? parseFloat(row.tolerance_max) : null,
-        sessions: sessionsByIngredient.get(ingId) || [], // Empty array if no sessions
-        exp_dates: expDatesArray // Array of objects: {exp_date, actual_weight}
+        sessions: sessions, // All sessions for this ingredient
+        exp_dates: exp_dates // Array of exp_dates with weights for multiple rows display
       };
     });
     
@@ -5623,31 +6750,6 @@ app.get('/api/history/:mo', async (req, res) => {
 app.get('/api/work-orders/:mo', async (req, res) => {
   try {
     const { mo } = req.params;
-    
-    // Check if QC reactivation columns exist (for backward compatibility)
-    let hasQcColumns = false;
-    try {
-      const columnCheck = await pool.query(
-        `SELECT column_name 
-         FROM information_schema.columns 
-         WHERE table_name = 'work_orders' 
-         AND column_name IN ('qc_reactivate_note', 'qc_reactivated_by', 'qc_reactivated_at')
-         LIMIT 1`
-      );
-      hasQcColumns = columnCheck.rows.length > 0;
-    } catch (e) {
-      console.warn('Could not check for QC columns:', e.message);
-    }
-    
-    // Build query with conditional QC columns
-    const qcColumns = hasQcColumns 
-      ? `wo.qc_reactivate_note,
-         wo.qc_reactivated_by,
-         wo.qc_reactivated_at,`
-      : `NULL as qc_reactivate_note,
-         NULL as qc_reactivated_by,
-         NULL as qc_reactivated_at,`;
-    
     const woResult = await pool.query(
       `SELECT 
          wo.id, 
@@ -5657,7 +6759,6 @@ app.get('/api/work-orders/:mo', async (req, res) => {
          wo.status, 
          wo.created_at, 
          wo.completed_at,
-         ${qcColumns}
          mf.formulation_code,
          mf.formulation_name
        FROM work_orders wo
@@ -5733,11 +6834,13 @@ app.get('/api/work-orders/:mo', async (req, res) => {
              (COALESCE(wp.actual_mass, 0) >= wp.tolerance_min AND COALESCE(wp.actual_mass, 0) <= wp.tolerance_max)
            ELSE NULL
          END as is_within_tolerance
-       FROM master_formulation_ingredients mfi
-       JOIN master_product mp ON mfi.product_id = mp.id
-       LEFT JOIN weighing_progress wp ON wp.work_order_id = $1 AND wp.ingredient_id = mfi.id
-       WHERE mfi.formulation_id = $2
-       ORDER BY COALESCE(mfi.sequence_order, 999999), mfi.created_at ASC`,
+      FROM master_formulation_ingredients mfi
+      JOIN master_product mp ON mfi.product_id = mp.id
+      LEFT JOIN weighing_progress wp ON wp.work_order_id = $1 AND wp.ingredient_id = mfi.id
+      WHERE mfi.formulation_id = $2
+        -- For existing WO: include all ingredients (active and inactive) to preserve history
+        -- This allows viewing complete history even if ingredients were deactivated
+      ORDER BY COALESCE(mfi.sequence_order, 999999), mfi.created_at ASC`,
       [wo.id, wo.formulation_id]
     );
     
@@ -7203,11 +8306,12 @@ app.post('/api/import-database', async (req, res) => {
         
         try {
           await pool.query(
-              `INSERT INTO master_formulation_ingredients (formulation_id, product_id, target_mass, sequence_order)
-               VALUES ($1, $2, $3, $4)
+              `INSERT INTO master_formulation_ingredients (formulation_id, product_id, target_mass, sequence_order, is_active)
+               VALUES ($1, $2, $3, $4, true)
              ON CONFLICT (formulation_id, product_id) DO UPDATE
                SET target_mass = EXCLUDED.target_mass, 
                    sequence_order = EXCLUDED.sequence_order,
+                   is_active = true,
                    updated_at = CURRENT_TIMESTAMP`,
               [formulationId, productId, fi.targetMass, sequenceOrder]
           );
@@ -7222,6 +8326,135 @@ app.post('/api/import-database', async (req, res) => {
       }
       
       console.log(`✅ Ingredients processed: ${successfulIngredients} successful, ${failedIngredients} failed`);
+      
+      // Full Refresh: Mark ingredients as inactive if NOT in the new CSV import
+      // Also reactivate ingredients that are in the new CSV but were previously inactive
+      if (fullRefresh) {
+        console.log('🗑️  Full Refresh: Processing ingredient activation/deactivation...');
+        
+        // Build set of (formulation_id, product_id) pairs from CSV import
+        const importedIngredientKeys = new Set();
+        for (const [formulationId, ingredients] of formulationIngredientGroups) {
+          for (const ing of ingredients) {
+            const key = `${formulationId}:${ing.productId}`;
+            importedIngredientKeys.add(key);
+            console.log(`📝 Tracked imported ingredient: formulation_id=${formulationId}, product_id=${ing.productId}, product_code=${ing.productCode}`);
+          }
+        }
+        
+        console.log(`📊 Total imported ingredient keys: ${importedIngredientKeys.size}`);
+        
+        // IMPORTANT: Wait a bit to ensure all INSERT/UPDATE operations are committed
+        // Then get all existing ingredients for formulations that are in the import
+        const importedFormulationIds = Array.from(formulationIngredientGroups.keys());
+        if (importedFormulationIds.length > 0) {
+          // Small delay to ensure database consistency
+          await new Promise(resolve => setTimeout(resolve, 100));
+          
+          const placeholders = importedFormulationIds.map((_, idx) => `$${idx + 1}`).join(',');
+          const existingIngredientsResult = await pool.query(
+            `SELECT mfi.id, mfi.formulation_id, mfi.product_id, mfi.is_active, mp.product_code, mp.product_name
+             FROM master_formulation_ingredients mfi
+             LEFT JOIN master_product mp ON mfi.product_id = mp.id
+             WHERE mfi.formulation_id IN (${placeholders})`,
+            importedFormulationIds
+          );
+          
+          console.log(`📊 Found ${existingIngredientsResult.rows.length} existing ingredients for imported formulations (after all inserts)`);
+          
+          let deactivatedCount = 0;
+          let reactivatedCount = 0;
+          for (const existingIng of existingIngredientsResult.rows) {
+            const key = `${existingIng.formulation_id}:${existingIng.product_id}`;
+            if (!importedIngredientKeys.has(key)) {
+              // This ingredient is not in the new CSV, mark as inactive
+              try {
+                await pool.query(
+                  'UPDATE master_formulation_ingredients SET is_active = false, updated_at = CURRENT_TIMESTAMP WHERE id = $1 AND is_active = true',
+                  [existingIng.id]
+                );
+                deactivatedCount++;
+                console.log(`🗑️  Marked ingredient ID ${existingIng.id} (${existingIng.product_code || 'N/A'}) as inactive (not in new CSV)`);
+              } catch (updateError) {
+                console.warn(`⚠️  Could not deactivate ingredient ID ${existingIng.id}:`, updateError.message);
+              }
+            } else {
+              // This ingredient is in the new CSV, ensure it's active
+              if (!existingIng.is_active) {
+                try {
+                  await pool.query(
+                    'UPDATE master_formulation_ingredients SET is_active = true, updated_at = CURRENT_TIMESTAMP WHERE id = $1',
+                    [existingIng.id]
+                  );
+                  reactivatedCount++;
+                  console.log(`✅ Reactivated ingredient ID ${existingIng.id} (${existingIng.product_code || 'N/A'}) - was inactive, now active (in new CSV)`);
+                } catch (updateError) {
+                  console.warn(`⚠️  Could not reactivate ingredient ID ${existingIng.id}:`, updateError.message);
+                }
+              } else {
+                console.log(`✅ Ingredient ID ${existingIng.id} (${existingIng.product_code || 'N/A'}) is in new CSV and already active`);
+              }
+            }
+          }
+          
+          if (deactivatedCount > 0) {
+            console.log(`✅ Marked ${deactivatedCount} ingredients as inactive (not in new CSV import)`);
+            comparison.changes.push({
+              type: 'deleted',
+              table: 'master_formulation_ingredients',
+              description: `Marked ${deactivatedCount} ingredients as inactive (not in new CSV)`,
+              old_value: `${deactivatedCount} ingredients deactivated`
+            });
+          } else {
+            console.log(`ℹ️  No ingredients to deactivate (all existing ingredients are in new CSV)`);
+          }
+          
+          if (reactivatedCount > 0) {
+            console.log(`✅ Reactivated ${reactivatedCount} ingredients that were previously inactive (now in new CSV)`);
+            comparison.changes.push({
+              type: 'updated',
+              table: 'master_formulation_ingredients',
+              description: `Reactivated ${reactivatedCount} ingredients (previously inactive, now in new CSV)`,
+              new_value: `${reactivatedCount} ingredients reactivated`
+            });
+          }
+        }
+        
+        // Also mark ingredients as inactive for formulations that are NOT in the new CSV
+        const importedFormulationCodes = Array.from(formulationsMap.keys());
+        const allFormulationsResult = await pool.query(
+          'SELECT id, formulation_code FROM master_formulation'
+        );
+        
+        const formulationsToDeactivate = allFormulationsResult.rows.filter(
+          f => !importedFormulationCodes.includes(f.formulation_code)
+        );
+        
+        if (formulationsToDeactivate.length > 0) {
+          const formulationIdsToDeactivate = formulationsToDeactivate.map(f => f.id);
+          const placeholders = formulationIdsToDeactivate.map((_, idx) => `$${idx + 1}`).join(',');
+          
+          // Mark ingredients as inactive for formulations not in CSV
+          const deactivateIngredientsResult = await pool.query(
+            `UPDATE master_formulation_ingredients 
+             SET is_active = false, updated_at = CURRENT_TIMESTAMP
+             WHERE formulation_id IN (${placeholders})
+             AND is_active = true`,
+            formulationIdsToDeactivate
+          );
+          
+          const deactivatedIngredientsCount = deactivateIngredientsResult.rowCount || 0;
+          if (deactivatedIngredientsCount > 0) {
+            console.log(`✅ Marked ${deactivatedIngredientsCount} ingredients as inactive for removed formulations`);
+            comparison.changes.push({
+              type: 'deleted',
+              table: 'master_formulation_ingredients',
+              description: `Marked ${deactivatedIngredientsCount} ingredients as inactive for removed formulations`,
+              old_value: `${deactivatedIngredientsCount} ingredients deactivated`
+            });
+          }
+        }
+      }
       
       comparison.new_ingredients = successfulIngredients;
       
@@ -7858,6 +9091,22 @@ server.listen(PORT, '0.0.0.0', () => {
     console.log('');
   }
   
+  // Auto-detect printer on startup
+  if (printerConfig.autoDetect) {
+    autoDetectPrinter().then(detected => {
+      if (detected) {
+        logToFile(`🖨️  Printer auto-detected: ${detected.name}`);
+        if (detected.allPrinters && detected.allPrinters.length > 1) {
+          logToFile(`   📋 ${detected.allPrinters.length} total printers available`);
+        }
+      } else {
+        logToFile(`⚠️  No printer detected. Using configured printer: ${printerConfig.port}`);
+      }
+    }).catch(err => {
+      logToFile(`⚠️  Printer auto-detect failed: ${err.message}`);
+    });
+  }
+  
   // Auto-open browser after server starts (delay to ensure server is ready)
   setTimeout(() => {
     logToFile(`\n🌐 Opening browser at ${url}...`);
@@ -7939,6 +9188,109 @@ process.on('SIGINT', async () => {
   
   // Log file is written synchronously, no need to close stream
   process.exit(0);
+});
+
+// In-memory storage for weighing receiver data (no database)
+const weighingReceiverData = [];
+
+// API endpoint to send weighing data to receiver
+app.post('/api/weighing-receiver/send', (req, res) => {
+  try {
+    const data = req.body;
+    
+    // Add timestamp and unique ID
+    const receivedData = {
+      id: `weighing-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
+      receivedAt: new Date().toISOString(),
+      ...data
+    };
+    
+    // Add to in-memory storage (newest first)
+    weighingReceiverData.unshift(receivedData);
+    
+    // Keep only last 1000 records to prevent memory issues
+    if (weighingReceiverData.length > 1000) {
+      weighingReceiverData.splice(1000);
+    }
+    
+    logToFile(`✅ Received weighing data for MO: ${data.workOrder?.work_order || 'Unknown'}`);
+    
+    res.json({
+      success: true,
+      message: 'Data berhasil diterima',
+      id: receivedData.id
+    });
+  } catch (error) {
+    console.error('Error receiving weighing data:', error);
+    logToFile(`❌ Error receiving weighing data: ${error.message}`);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to receive data',
+      details: error.message
+    });
+  }
+});
+
+// API endpoint to get all weighing receiver data
+app.get('/api/weighing-receiver/list', (req, res) => {
+  try {
+    const { search } = req.query;
+    
+    let filteredData = weighingReceiverData;
+    
+    // Filter by search term if provided
+    if (search && search.trim()) {
+      const searchLower = search.toLowerCase();
+      filteredData = weighingReceiverData.filter(item => {
+        const workOrder = item.workOrder?.work_order || '';
+        const sku = item.workOrder?.sku || '';
+        const formulaName = item.workOrder?.formulation_name || '';
+        return workOrder.toLowerCase().includes(searchLower) ||
+               sku.toLowerCase().includes(searchLower) ||
+               formulaName.toLowerCase().includes(searchLower);
+      });
+    }
+    
+    res.json({
+      success: true,
+      data: filteredData,
+      total: filteredData.length
+    });
+  } catch (error) {
+    console.error('Error fetching weighing receiver data:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to fetch data',
+      details: error.message
+    });
+  }
+});
+
+// API endpoint to get specific weighing data by ID
+app.get('/api/weighing-receiver/:id', (req, res) => {
+  try {
+    const { id } = req.params;
+    const data = weighingReceiverData.find(item => item.id === id);
+    
+    if (!data) {
+      return res.status(404).json({
+        success: false,
+        error: 'Data not found'
+      });
+    }
+    
+    res.json({
+      success: true,
+      data: data
+    });
+  } catch (error) {
+    console.error('Error fetching weighing receiver data:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to fetch data',
+      details: error.message
+    });
+  }
 });
 
 module.exports = app;

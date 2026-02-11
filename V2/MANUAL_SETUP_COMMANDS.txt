@@ -1,0 +1,130 @@
+================================================================
+MANUAL SETUP DATABASE - COPY PASTE COMMANDS
+================================================================
+
+STEP 1: Masuk ke folder V2
+================================================================
+cd C:\Users\info\Documents\Project\not-released\IoT-Project\Released-Github\IoT-Scales\V2
+
+
+STEP 2: Set PostgreSQL Password
+================================================================
+set PGPASSWORD=Admin123
+
+
+STEP 3: Test Koneksi
+================================================================
+psql -U postgres -c "SELECT version();"
+
+
+STEP 4: Drop & Create Database
+================================================================
+psql -U postgres -c "DROP DATABASE IF EXISTS \"FLB_MOWS\";"
+psql -U postgres -c "CREATE DATABASE \"FLB_MOWS\";"
+
+
+STEP 5: Import Schema (Coba yang pertama dulu, kalau error coba yang kedua)
+================================================================
+psql -U postgres -d "FLB_MOWS" -f database\schema.sql
+
+REM Jika error, coba:
+psql -U postgres -d "FLB_MOWS" -f ..\database\schema.sql
+
+
+STEP 6: Import Core Schema
+================================================================
+psql -U postgres -d "FLB_MOWS" -f database\init\01-core-schema.sql
+
+REM Jika error, coba:
+psql -U postgres -d "FLB_MOWS" -f ..\database\init\01-core-schema.sql
+
+
+STEP 7: Import Weighing Tables
+================================================================
+psql -U postgres -d "FLB_MOWS" -f database\init\02-weighing.sql
+
+REM Jika error, coba:
+psql -U postgres -d "FLB_MOWS" -f ..\database\init\02-weighing.sql
+
+
+STEP 8: Run Migrations (Skip jika file tidak ada, non-critical)
+================================================================
+psql -U postgres -d "FLB_MOWS" -f database\migration-add-reject-status.sql
+psql -U postgres -d "FLB_MOWS" -f database\migration-add-opened-at.sql
+psql -U postgres -d "FLB_MOWS" -f database\migration-add-print-history.sql
+psql -U postgres -d "FLB_MOWS" -f database\migration-add-qc-role-and-reactivate-note.sql
+psql -U postgres -d "FLB_MOWS" -f database\migration-add-sequence-order.sql
+psql -U postgres -d "FLB_MOWS" -f database\migrations\add_is_active_to_formulation_ingredients.sql
+
+
+STEP 9: Fix User Passwords (Option A - Jika punya file)
+================================================================
+psql -U postgres -d "FLB_MOWS" -f scripts\update-user-passwords.sql
+
+
+STEP 9: Fix User Passwords (Option B - Inline SQL)
+================================================================
+psql -U postgres -d "FLB_MOWS" -c "UPDATE master_user SET password_hash = '$2a$10$ArpArDkniSYq8cAT/2M1/er2dsaM38PrVUDbI/VmFZoX4ET/srdsK', updated_at = CURRENT_TIMESTAMP WHERE username = 'admin';"
+
+psql -U postgres -d "FLB_MOWS" -c "UPDATE master_user SET password_hash = '$2a$10$icN.qmF9/y8Vy0A/oEQ/9.VLQVlwzN/3lXgMMnHLOjQ8SEW8hsG3W', updated_at = CURRENT_TIMESTAMP WHERE username = 'faliq';"
+
+psql -U postgres -d "FLB_MOWS" -c "UPDATE master_user SET password_hash = '$2a$10$iebIf6hSQ6xfKiK7rg70jOQ73TyJlKf5dT1N280S3XG2zCGylau6C', updated_at = CURRENT_TIMESTAMP WHERE username = 'operator1';"
+
+psql -U postgres -d "FLB_MOWS" -c "UPDATE master_user SET password_hash = '$2a$10$NPpgCWBwFVPhj1ltzg0SAOobWvEBUhmeJOKTp5.jlWwHWAH.yDFV2', updated_at = CURRENT_TIMESTAMP WHERE username = 'supervisor';"
+
+
+STEP 10: Verify
+================================================================
+psql -U postgres -d "FLB_MOWS" -c "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = 'public';"
+
+psql -U postgres -d "FLB_MOWS" -c "SELECT username, role FROM master_user;"
+
+
+STEP 11: Install Node Dependencies
+================================================================
+npm install
+
+
+STEP 12: Start Server
+================================================================
+node server.js
+
+
+================================================================
+DEFAULT USER CREDENTIALS
+================================================================
+Username: admin       Password: admin123
+Username: faliq       Password: faliq123
+Username: operator1   Password: operator123
+Username: supervisor  Password: supervisor123
+Username: qc          Password: qc123
+
+
+================================================================
+TROUBLESHOOTING
+================================================================
+
+Error: psql is not recognized
+  → Install PostgreSQL atau tambahkan ke PATH
+
+Error: connection failed
+  → PostgreSQL service tidak running
+  → Buka services.msc, start postgresql service
+
+Error: password authentication failed
+  → Password bukan Admin123
+  → Ubah: set PGPASSWORD=your_password
+
+Error: No such file or directory
+  → File database tidak ada
+  → Cek lokasi dengan: dir database\
+  → Atau gunakan path parent: ..\database\
+
+Error: database already exists
+  → Normal, DROP DATABASE dulu atau skip CREATE
+
+================================================================
+
+
+
+

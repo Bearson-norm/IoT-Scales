@@ -13,6 +13,9 @@ import DatabaseImport from './components/DatabaseImport'
 import Settings from './components/Settings'
 import History from './components/History'
 import HistoryDetail from './components/HistoryDetail'
+import UserManagement from './components/UserManagement'
+import WeighingReceiverList from './components/weighing-receiver/WeighingReceiverList'
+import WeighingReceiverDetail from './components/weighing-receiver/WeighingReceiverDetail'
 import MOScanModal from './components/MOScanModal'
 import { getCurrentTime } from './utils/timeUtils.js'
 import { AlertModalProvider, useAlert } from './utils/alertModal'
@@ -48,6 +51,7 @@ function AppContent() {
   const [currentWeight, setCurrentWeight] = useState(0)
   const [scaleConnected, setScaleConnected] = useState(false)
   const [zeroCheckWeight, setZeroCheckWeight] = useState(0) // Weight before weighing starts (should be 0)
+  const [scaleDisplayWeight, setScaleDisplayWeight] = useState(0) // Real-time weight from scale for digital display
   const [isCheckingZero, setIsCheckingZero] = useState(false) // Status saat melakukan zero check
   
   // Printer configuration state
@@ -243,12 +247,10 @@ function AppContent() {
     return () => clearInterval(timer)
   }, [])
 
-  // Zero check: Lightweight polling for display only (reduced frequency to prevent overlapping)
-  // Main zero check happens on button click for better performance
-  // CRITICAL: This polling only runs when ingredient is selected but weighing hasn't started yet
+  // Zero check: Now uses WebSocket instead of HTTP polling
+  // Zero check weight is updated from WebSocket data when ingredient is selected but weighing not active
+  // This eliminates HTTP polling completely
   useEffect(() => {
-    // Only poll when ingredient is selected AND weighing is NOT active
-    // This ensures polling works after modal closes and ingredient is selected
     if (!selectedIngredient || isWeighingActive) {
       if (!isWeighingActive && !selectedIngredient) {
         // Reset zero check weight when no ingredient selected and not weighing
@@ -258,97 +260,9 @@ function AppContent() {
       return
     }
 
-    // Start polling when ingredient is selected and not actively weighing
+    // Zero check is now handled by WebSocket - no HTTP polling needed
     setIsCheckingZero(true)
-    let zeroCheckInterval = null
-    let isPolling = false
-    // FIXED RATE: Use constant polling interval for consistent rendering
-    // This ensures zero weight display updates at a steady, predictable rate
-    const POLLING_INTERVAL = 1000 // Fixed 1 second - never changes
-    let controller = null
-
-    const clearController = () => {
-      if (controller) {
-        controller.abort()
-        controller = null
-      }
-    }
-
-    const pollZero = async () => {
-      // Prevent concurrent requests - critical to prevent overlapping
-      if (isPolling) {
-        return
-      }
-
-      // CRITICAL: Check if still active before polling
-      // Re-check conditions to handle state changes during polling
-      // IMPORTANT: Double-check isWeighingActive to prevent conflict with weighing active polling
-      if (!selectedIngredient || isWeighingActive) {
-        if (zeroCheckInterval) {
-          clearInterval(zeroCheckInterval)
-          zeroCheckInterval = null
-        }
-        // Stop polling immediately if weighing became active
-        setIsCheckingZero(false)
-        return
-      }
-
-      isPolling = true
-      clearController()
-      controller = new AbortController()
-      const timeoutId = setTimeout(() => {
-        controller && controller.abort()
-      }, 500) // Request timeout - reduced for faster failure detection
-
-      try {
-        const resp = await fetch('/api/scale/read', { signal: controller.signal })
-        if (resp.ok) {
-          const data = await resp.json()
-          if (data.success && data.weight !== undefined) {
-            // Weight is now always in grams from server
-            const weightGrams = data.weight
-            setZeroCheckWeight(prev => {
-              // Only log significant changes (> 0.5g) to reduce console spam
-              if (Math.abs(weightGrams - prev) > 0.5) {
-                console.log('Zero check weight updated:', prev.toFixed(2), '->', weightGrams.toFixed(2), 'g')
-              }
-              return weightGrams
-            })
-          }
-        } else if (resp.status === 429) {
-          // Rate limited - log but keep fixed interval
-          console.warn('⚠️ Zero check rate limited (429), will retry at fixed interval')
-        } else if (resp.status === 504) {
-          // Gateway timeout - log but keep fixed interval
-          console.warn('⚠️ Zero check timeout (504), will retry at fixed interval')
-        }
-      } catch (e) {
-        if (e.name !== 'AbortError') {
-          // Silently handle errors - will retry at fixed interval
-        }
-      } finally {
-        clearTimeout(timeoutId)
-        isPolling = false
-      }
-    }
-
-    // CRITICAL: Start polling immediately when effect runs (after modal closes)
-    // This ensures digital-weight display updates right away
-    console.log('🔄 Starting zero check polling for ingredient:', selectedIngredient?.name, `(fixed interval: ${POLLING_INTERVAL}ms)`)
-    pollZero() // Call immediately
-    
-    // Set up interval for continuous polling with FIXED rate
-    zeroCheckInterval = setInterval(pollZero, POLLING_INTERVAL)
-
-    return () => {
-      setIsCheckingZero(false)
-      if (zeroCheckInterval) {
-        clearInterval(zeroCheckInterval)
-        zeroCheckInterval = null
-      }
-      clearController()
-      isPolling = false
-    }
+    console.log('✅ Zero check enabled for ingredient:', selectedIngredient?.name, '- Using WebSocket for real-time updates')
   }, [selectedIngredient, isWeighingActive])
 
   // CRITICAL: Sync selectedIngredient with recipe state to ensure savedWeight is always up-to-date
@@ -418,6 +332,9 @@ function AppContent() {
               console.log('🔄 Resetting currentWeight - weighing not active and no recent weight data')
             }
       setCurrentWeight(0)
+      // CRITICAL: Don't reset scaleDisplayWeight here - it should show actual scale reading
+      // scaleDisplayWeight is updated from WebSocket and should reflect real-time scale value
+      // Only reset if we're sure scale is actually 0 (handled by WebSocket message handler)
       // CRITICAL: Reset currentWeight in recipe state when weighing stops
       // This ensures no ingredient has stuck currentWeight when not actively weighing
         setRecipe(prev => prev.map(ing => ({
@@ -443,28 +360,65 @@ function AppContent() {
       }
     }
 
-    // Store current selected ingredient ID to prevent stale closure issues
-    const currentIngredientId = selectedIngredient.id
+    // CRITICAL: WebSocket should ALWAYS be connected to receive real-time scale readings
+    // This ensures scaleDisplayWeight is always updated for digital-weight display
+    // WebSocket should connect immediately, even before selectedIngredient is set
+    // This fixes the issue where digital-weight freezes at 0 before Start button is clicked
+    // Use null if no ingredient selected (WebSocket will still connect for scale display)
+    const currentIngredientId = selectedIngredient ? (selectedIngredient.id || selectedIngredient.code) : null
 
     // WebSocket connection for real-time scale data
+    // CRITICAL: Use explicit backend port (3001) instead of window.location.host
+    // This ensures WebSocket connects to the correct server even when frontend is on different port
     const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
-    const wsUrl = `${wsProtocol}//${window.location.host}/ws/scale`
+    const backendHost = window.location.hostname || 'localhost'
+    const backendPort = '3001' // Backend server port
+    const wsUrl = `${wsProtocol}//${backendHost}:${backendPort}/ws/scale`
     let ws = null
     let reconnectTimeout = null
+    let reconnectAttempts = 0
+    const MAX_RECONNECT_ATTEMPTS = 3 // Reduced from 5 to prevent excessive reconnection attempts
     let fallbackInterval = null // Fallback to HTTP polling if WebSocket fails
     let useWebSocket = true
+    let lastReconnectTime = 0
+    const RECONNECT_COOLDOWN = 5000 // 5 seconds cooldown between reconnect attempts
+    let connectedIngredientId = null // Track which ingredient ID the WebSocket is connected for
 
+    let isConnecting = false // Prevent multiple simultaneous connection attempts
+    
     const connectWebSocket = () => {
+      // Prevent multiple simultaneous connection attempts
+      if (isConnecting || (ws && ws.readyState === WebSocket.CONNECTING)) {
+        return
+      }
+      
+      // Close existing connection if any
+      if (ws) {
+        try {
+          ws.close()
+        } catch (e) {
+          // Ignore errors when closing
+        }
+        ws = null
+      }
+      
       try {
+        isConnecting = true
         ws = new WebSocket(wsUrl)
         
         ws.onopen = () => {
-          // WebSocket connected for real-time scale data
+          isConnecting = false
+          reconnectAttempts = 0 // Reset reconnect attempts on successful connection
+          lastReconnectTime = 0 // Reset last reconnect time
+          connectedIngredientId = currentIngredientId // Track which ingredient we're connected for
           // Clear any fallback polling
           if (fallbackInterval) {
             clearInterval(fallbackInterval)
             fallbackInterval = null
           }
+          useWebSocket = true // Ensure WebSocket is marked as active
+          console.log('✅ WebSocket CONNECTED - digital-weight display will now update in real-time')
+          console.log('📡 Current scaleDisplayWeight:', scaleDisplayWeight, 'g')
         }
         
         ws.onmessage = (event) => {
@@ -474,17 +428,37 @@ function AppContent() {
             // Handle scale data - optimized for seamless real-time updates
             if (message.type === 'scale_data' && message.success && message.weight !== undefined) {
               // Weight is now always in grams from server
-              // CRITICAL: Validate weight exists and is valid before processing
-              // If weight is null/undefined, it means backend rejected incomplete data - skip update
-              if (message.weight === null || message.weight === undefined) {
-                console.log('⚠️ Backend rejected incomplete data, skipping update (WebSocket). Previous weight:', currentWeight);
-                return; // Skip update if backend rejected data - keep previous value
+              // CRITICAL: Always update scaleDisplayWeight FIRST with actual weight value
+              // This ensures digital-weight display always shows real-time scale reading without freeze
+              // scaleDisplayWeight is updated on EVERY WebSocket message, regardless of conditions
+              // This ensures continuous data flow without interruption
+              // CRITICAL: Update scaleDisplayWeight even if weight is null/undefined/invalid to prevent freeze
+              // If weight is invalid, use 0 to ensure display doesn't freeze
+              let weightGrams = message.weight
+              
+              // CRITICAL: Always update scaleDisplayWeight FIRST - this ensures continuous data flow
+              // Calculate roundedWeight immediately for display consistency
+              // This MUST be done BEFORE any validation or early return to prevent freeze
+              let roundedWeight = 0
+              if (weightGrams === null || weightGrams === undefined || typeof weightGrams !== 'number' || isNaN(weightGrams)) {
+                console.log('⚠️ Invalid weight value received, setting scaleDisplayWeight to 0 to prevent freeze:', weightGrams);
+                roundedWeight = 0
+              } else {
+                roundedWeight = Math.round(weightGrams * 10) / 10
               }
               
-              let weightGrams = message.weight
+              // CRITICAL: Update scaleDisplayWeight IMMEDIATELY, before any validation or early return
+              // This ensures digital-weight ALWAYS shows real-time value, regardless of validation
+              setScaleDisplayWeight(roundedWeight)
+              
+              // Now check if weight is invalid and skip further processing
+              if (weightGrams === null || weightGrams === undefined || typeof weightGrams !== 'number' || isNaN(weightGrams)) {
+                return; // Skip further processing if weight is invalid
+              }
               
               // CRITICAL: If weight is 0 or near 0 and not actively weighing, reset currentWeight
               // This ensures that when user removes weight from scale, frontend resets even if previous weight was stored
+              // scaleDisplayWeight already updated above
               if (Math.abs(weightGrams) < 0.5 && (!isWeighingActive || !selectedIngredient)) {
                 if (currentWeightRef.current > 0) {
                   console.log('🔄 Scale reading is 0, resetting currentWeight from', currentWeightRef.current, 'to 0 (WebSocket)')
@@ -496,14 +470,8 @@ function AppContent() {
                     currentWeight: 0
                   })))
                 }
-                return // Skip further processing when scale is 0 and not weighing
-              }
-              
-              // CRITICAL: Validate weight value to prevent incorrect parsing (e.g., 529 becoming 9)
-              // Ensure weight is a valid number
-              if (typeof weightGrams !== 'number' || isNaN(weightGrams)) {
-                console.warn('⚠️ Invalid weight value received:', weightGrams, 'from message:', message);
-                return; // Skip invalid weight values
+                // REMOVED: Zero check weight update - user requested to remove zero check
+                // Don't return here - continue to update scaleDisplayWeight below
               }
               
               // CRITICAL: Validate weight range to catch parsing errors
@@ -600,17 +568,16 @@ function AppContent() {
               // CRITICAL: Update refs immediately to track latest weight for reset prevention
               currentWeightRef.current = weightGrams
               
-              // CRITICAL: Only update if we're still in weighing mode to prevent fluktuasi
+              // NOTE: scaleDisplayWeight already updated at the beginning of handler (before all validations)
+              // This ensures digital-weight ALWAYS shows real-time value without freeze
+              
+              // CRITICAL: Only update currentWeight if we're still in weighing mode to prevent fluktuasi
               // Check conditions before updating to prevent race conditions
               // CRITICAL: Also check refs to handle temporary state updates
               if ((isWeighingActive || isWeighingActiveRef.current) && 
                   (selectedIngredient || selectedIngredientRef.current)) {
-                // CRITICAL: Only update if weight actually changed (prevent unnecessary re-renders)
+                // CRITICAL: Only update currentWeight if weight actually changed (prevent unnecessary re-renders)
                 // Since data from scale is stable, we don't need to update for every message
-                // Round to 0.1g precision and use symmetric logic with lower threshold for accurate measurement
-                // CRITICAL: Update for increases (to track weight being added) and decreases >= 0.1g (for accuracy)
-                // Lower threshold (0.1g instead of 0.2g) ensures accurate display (e.g., 400.5g stays 400.5g)
-                const roundedWeight = Math.round(weightGrams * 10) / 10
                 const roundedCurrent = Math.round(currentWeight * 10) / 10
                 const change = roundedWeight - roundedCurrent // Signed change (positive = increase, negative = decrease)
                 const absChange = Math.abs(change)
@@ -707,32 +674,140 @@ function AppContent() {
         }
         
         ws.onerror = (error) => {
-          console.debug('WebSocket error, falling back to HTTP polling:', error)
-          useWebSocket = false
-          // Fallback to HTTP polling
-          startFallbackPolling()
+          isConnecting = false
+          // Don't log every error - only log significant ones to reduce console spam
+          // The onclose handler will handle reconnection logic
         }
         
-        ws.onclose = () => {
-          // Reconnect after 2 seconds if still active
-          if (isWeighingActive && selectedIngredient) {
+        ws.onclose = (event) => {
+          isConnecting = false
+          
+          // Don't reconnect if it was a normal close (code 1000) or if ingredient changed
+          if (event.code === 1000) {
+            connectedIngredientId = null // Reset on normal close
+            return // Normal close, don't reconnect
+          }
+          
+          // Check if ingredient changed while connection was closing
+          // CRITICAL: Allow reconnection even if no ingredient selected (for scaleDisplayWeight updates)
+          const closingIngredientId = selectedIngredient ? (selectedIngredient.id || selectedIngredient.code) : null
+          if (connectedIngredientId !== closingIngredientId && closingIngredientId !== null) {
+            // Ingredient changed (and we have a new ingredient), don't reconnect
+            // But if closingIngredientId is null, we should still reconnect for scaleDisplayWeight updates
+            connectedIngredientId = null
+            return
+          }
+          
+          // Only fallback to HTTP polling if we've exhausted reconnect attempts
+          if (reconnectAttempts >= MAX_RECONNECT_ATTEMPTS) {
+            console.warn('⚠️ WebSocket reconnection failed after', reconnectAttempts, 'attempts. Falling back to HTTP polling.')
+            useWebSocket = false
+            connectedIngredientId = null
+            startFallbackPolling()
+            return
+          }
+          
+          // CRITICAL: Try to reconnect even if no ingredient selected
+          // This ensures WebSocket stays connected for scaleDisplayWeight updates
+          // WebSocket should remain connected to receive real-time scale readings
+          const reconnectIngredientId = selectedIngredient ? (selectedIngredient.id || selectedIngredient.code) : null
+          if (useWebSocket && reconnectAttempts < MAX_RECONNECT_ATTEMPTS && connectedIngredientId === reconnectIngredientId) {
+            const now = Date.now()
+            const timeSinceLastReconnect = now - lastReconnectTime
+            
+            // Enforce cooldown period to prevent rapid reconnection attempts
+            if (timeSinceLastReconnect < RECONNECT_COOLDOWN) {
+              const remainingCooldown = RECONNECT_COOLDOWN - timeSinceLastReconnect
+              reconnectTimeout = setTimeout(() => {
+                // Double-check conditions and ingredient ID before reconnecting
+                // CRITICAL: Allow reconnection even if no ingredient selected (for scaleDisplayWeight updates)
+                const finalIngredientId = selectedIngredient ? (selectedIngredient.id || selectedIngredient.code) : null
+                if (useWebSocket && !isConnecting && connectedIngredientId === finalIngredientId) {
+                  reconnectAttempts++
+                  lastReconnectTime = Date.now()
+                  const delay = Math.min(1000 * reconnectAttempts, 5000) // Exponential backoff, max 5s
+                  reconnectTimeout = setTimeout(() => {
+                    // Triple-check ingredient ID before reconnecting
+                    const stillFinalIngredientId = selectedIngredient ? (selectedIngredient.id || selectedIngredient.code) : null
+                    if (useWebSocket && !isConnecting && connectedIngredientId === stillFinalIngredientId) {
+                      connectWebSocket()
+                    }
+                  }, delay)
+                }
+              }, remainingCooldown)
+              return
+            }
+            
+            reconnectAttempts++
+            lastReconnectTime = now
+            const delay = Math.min(1000 * reconnectAttempts, 5000) // Exponential backoff, max 5s
             reconnectTimeout = setTimeout(() => {
-              if (useWebSocket) {
+              // Double-check conditions and ingredient ID before reconnecting
+              // CRITICAL: Allow reconnection even if no ingredient selected (for scaleDisplayWeight updates)
+              const finalIngredientId = selectedIngredient ? (selectedIngredient.id || selectedIngredient.code) : null
+              if (useWebSocket && !isConnecting && connectedIngredientId === finalIngredientId) {
                 connectWebSocket()
               }
-            }, 2000)
+            }, delay)
+          } else if (reconnectAttempts >= MAX_RECONNECT_ATTEMPTS) {
+            // After max attempts, stop trying and fallback to HTTP polling
+            console.warn('⚠️ WebSocket reconnection failed after', reconnectAttempts, 'attempts. Falling back to HTTP polling.')
+            useWebSocket = false
+            connectedIngredientId = null
+            startFallbackPolling()
+          } else if (connectedIngredientId !== reconnectIngredientId && reconnectIngredientId !== null) {
+            // Ingredient changed (and we have a new ingredient), don't reconnect
+            // But if reconnectIngredientId is null, we should still reconnect for scaleDisplayWeight updates
+            connectedIngredientId = null
           }
         }
       } catch (e) {
-        console.debug('WebSocket connection failed, using HTTP polling:', e.message)
-        useWebSocket = false
-        startFallbackPolling()
+        isConnecting = false
+        // Only fallback if we can't even create the WebSocket object and we've exceeded max attempts
+        if (reconnectAttempts >= MAX_RECONNECT_ATTEMPTS) {
+          console.warn('⚠️ WebSocket connection failed after', reconnectAttempts, 'attempts. Using HTTP polling.')
+          useWebSocket = false
+          startFallbackPolling()
+        } else if (useWebSocket) {
+          // CRITICAL: Allow reconnection even if no ingredient selected (for scaleDisplayWeight updates)
+          const now = Date.now()
+          const timeSinceLastReconnect = now - lastReconnectTime
+          
+          // Enforce cooldown period
+          if (timeSinceLastReconnect >= RECONNECT_COOLDOWN) {
+            reconnectAttempts++
+            lastReconnectTime = now
+            const delay = Math.min(1000 * reconnectAttempts, 5000)
+            reconnectTimeout = setTimeout(() => {
+              if (useWebSocket && !isConnecting) {
+                connectWebSocket()
+              }
+            }, delay)
+          } else {
+            // Wait for cooldown period
+            const remainingCooldown = RECONNECT_COOLDOWN - timeSinceLastReconnect
+            reconnectTimeout = setTimeout(() => {
+              if (useWebSocket && !isConnecting && reconnectAttempts < MAX_RECONNECT_ATTEMPTS) {
+                reconnectAttempts++
+                lastReconnectTime = Date.now()
+                const delay = Math.min(1000 * reconnectAttempts, 5000)
+                reconnectTimeout = setTimeout(() => {
+                  if (useWebSocket && !isConnecting) {
+                    connectWebSocket()
+                  }
+                }, delay)
+              }
+            }, remainingCooldown)
+          }
+        }
       }
     }
 
-    // Fallback HTTP polling (if WebSocket unavailable)
-    // Optimized for seamless updates with minimal delay
+    // Fallback HTTP polling - DISABLED: WebSocket is the only method
+    // This function is kept for emergency fallback only but should never be called
     const startFallbackPolling = () => {
+      console.error('❌ ERROR: HTTP polling fallback should not be used! WebSocket must be working.')
+      console.error('❌ Please check WebSocket connection. Falling back to HTTP polling as last resort.')
       // CRITICAL: Clear any existing interval first to prevent multiple polling
       if (fallbackInterval) {
         clearInterval(fallbackInterval)
@@ -740,7 +815,7 @@ function AppContent() {
       }
       
       let isPolling = false // Prevent concurrent requests
-      let retryDelay = 100 // Start with 100ms for seamless updates (server allows this for HTTP polling)
+      let retryDelay = 2000 // Increased delay to reduce server load - this should not be used
       
       // Helper function to safely restart polling with new delay
       const restartPolling = (newDelay) => {
@@ -823,17 +898,31 @@ function AppContent() {
             }
             
             // Weight is now always in grams from server
-            // CRITICAL: Validate weight exists and is valid before processing
-            // If weight is null/undefined, it means backend rejected incomplete data - skip update
-            if (data.weight === null || data.weight === undefined) {
-              console.log('⚠️ Backend rejected incomplete data, skipping update (HTTP polling). Previous weight:', currentWeight);
-              return; // Skip update if backend rejected data - keep previous value
+            let weightGrams = data.weight
+            
+            // CRITICAL: Always update scaleDisplayWeight FIRST - this ensures continuous data flow
+            // Calculate roundedWeight immediately for display consistency
+            // This MUST be done BEFORE any validation or early return to prevent freeze
+            let roundedWeight = 0
+            if (weightGrams === null || weightGrams === undefined || typeof weightGrams !== 'number' || isNaN(weightGrams)) {
+              console.log('⚠️ Invalid weight value received (HTTP polling), setting scaleDisplayWeight to 0 to prevent freeze:', weightGrams);
+              roundedWeight = 0
+            } else {
+              roundedWeight = Math.round(weightGrams * 10) / 10
             }
             
-            let weightGrams = data.weight
+            // CRITICAL: Update scaleDisplayWeight IMMEDIATELY, before any validation or early return
+            // This ensures digital-weight ALWAYS shows real-time value, regardless of validation
+            setScaleDisplayWeight(roundedWeight)
+            
+            // Now check if weight is invalid and skip further processing
+            if (weightGrams === null || weightGrams === undefined || typeof weightGrams !== 'number' || isNaN(weightGrams)) {
+              return; // Skip further processing if weight is invalid
+            }
             
             // CRITICAL: If weight is 0 or near 0 and not actively weighing, reset currentWeight
             // This ensures that when user removes weight from scale, frontend resets even if previous weight was stored
+            // scaleDisplayWeight already updated above
             if (Math.abs(weightGrams) < 0.5 && (!isWeighingActive || !selectedIngredient)) {
               if (currentWeightRef.current > 0) {
                 console.log('🔄 Scale reading is 0, resetting currentWeight from', currentWeightRef.current, 'to 0 (HTTP polling)')
@@ -843,17 +932,11 @@ function AppContent() {
                 setRecipe(prev => prev.map(ing => ({
                   ...ing,
                   currentWeight: 0
-                })))
+                  })))
+                }
+                // REMOVED: Zero check weight update - user requested to remove zero check
+                // Don't return here - continue to update scaleDisplayWeight below
               }
-              return // Skip further processing when scale is 0 and not weighing
-            }
-            
-            // CRITICAL: Validate weight value to prevent incorrect parsing (e.g., 529 becoming 9)
-            // Ensure weight is a valid number
-            if (typeof weightGrams !== 'number' || isNaN(weightGrams)) {
-              console.warn('⚠️ Invalid weight value received (HTTP polling):', weightGrams, 'from data:', data);
-              return; // Skip invalid weight values
-            }
             
             // CRITICAL: Validate weight range to catch parsing errors
             // Check for suspiciously small values when we expect larger ones
@@ -951,17 +1034,15 @@ function AppContent() {
             // CRITICAL: Update refs immediately to track latest weight for reset prevention
             currentWeightRef.current = weightGrams
             
-            // CRITICAL: Only update if we're still in weighing mode to prevent fluktuasi
+            // NOTE: scaleDisplayWeight already updated at the beginning of handler (before all validations)
+            // This ensures digital-weight ALWAYS shows real-time value without freeze
+            
+            // CRITICAL: Only update currentWeight if we're still in weighing mode to prevent fluktuasi
             // Check conditions before updating to prevent race conditions
             // CRITICAL: Also check refs to handle temporary state updates
             if ((isWeighingActive || isWeighingActiveRef.current) && 
                 (selectedIngredient || selectedIngredientRef.current)) {
-              // CRITICAL: Only update if weight actually changed (prevent unnecessary re-renders)
-              // Since data from scale is stable, we don't need to update for every message
-              // Round to 0.1g precision and use symmetric logic with lower threshold for accurate measurement
-              // CRITICAL: Update for increases (to track weight being added) and decreases >= 0.1g (for accuracy)
-              // Lower threshold (0.1g instead of 0.2g) ensures accurate display (e.g., 400.5g stays 400.5g)
-              const roundedWeight = Math.round(weightGrams * 10) / 10
+              // CRITICAL: Only update currentWeight if weight actually changed (prevent unnecessary re-renders)
               const roundedCurrent = Math.round(currentWeight * 10) / 10
               const change = roundedWeight - roundedCurrent // Signed change (positive = increase, negative = decrease)
               const absChange = Math.abs(change)
@@ -1061,10 +1142,38 @@ function AppContent() {
       fallbackInterval = setInterval(pollScale, retryDelay)
     }
 
-    // Start WebSocket connection
+    // Start WebSocket connection (ONLY method - no HTTP polling)
+    // CRITICAL: WebSocket should ALWAYS be connected to receive real-time scale readings
+    // This ensures scaleDisplayWeight is always updated for digital-weight display
+    // WebSocket should connect immediately, even before selectedIngredient is set
+    // This fixes the issue where digital-weight freezes at 0 before Start button is clicked
+    // CRITICAL FIX: WebSocket should NEVER reconnect when ingredient changes!
+    // Reconnecting causes display-weight to freeze during reconnection period
+    // WebSocket should stay connected and continuously update scaleDisplayWeight for ALL ingredients
     if (useWebSocket) {
-      connectWebSocket()
+      // Only connect if:
+      // 1. No WebSocket exists, OR
+      // 2. WebSocket is not connected/connecting (disconnected or failed)
+      // DO NOT reconnect when ingredient ID changes - this causes freeze!
+      const needsNewConnection = !ws || 
+                                 (ws.readyState !== WebSocket.OPEN && ws.readyState !== WebSocket.CONNECTING)
+      
+      if (needsNewConnection) {
+        console.log('🔌 Initiating WebSocket connection for digital-weight display...')
+        connectWebSocket()
+      } else {
+        console.log('✅ WebSocket already connected - digital-weight display should be updating')
+      }
+      
+      // Update connectedIngredientId to track current ingredient without reconnecting
+      // This allows WebSocket to stay connected while tracking ingredient context
+      if (ws && ws.readyState === WebSocket.OPEN) {
+        const ingredientId = selectedIngredient ? (selectedIngredient.id || selectedIngredient.code) : null
+        connectedIngredientId = ingredientId
+      }
     } else {
+      console.error('❌ WebSocket disabled - this should not happen!')
+      console.error('❌ Falling back to HTTP polling as emergency measure')
       startFallbackPolling()
     }
     
@@ -1092,18 +1201,30 @@ function AppContent() {
         }
       })
       
-      if (ws) {
-        ws.close()
-        ws = null
-      }
+      // CRITICAL FIX: DO NOT cleanup WebSocket connection here!
+      // WebSocket should stay connected continuously to prevent display-weight freeze
+      // When Save is clicked, selectedIngredient is set to null, triggering this cleanup
+      // But we want WebSocket to stay connected to keep display-weight updating!
+      // Commented out WebSocket cleanup:
+      // isConnecting = false
+      // connectedIngredientId = null
+      // if (ws) { ws.close(); ws = null; }
+      // reconnectAttempts = 0
+      // lastReconnectTime = 0
+      
+      // Only clear reconnect timeout (safe to clear)
       if (reconnectTimeout) {
         clearTimeout(reconnectTimeout)
+        reconnectTimeout = null
       }
       if (fallbackInterval) {
         clearInterval(fallbackInterval)
+        fallbackInterval = null
       }
     }
-  }, [isWeighingActive, selectedIngredient])
+  }, [isWeighingActive, selectedIngredient?.id])  // CRITICAL FIX: Only track id, not the whole object or code
+  // This prevents useEffect from re-running when selectedIngredient properties change (like expDate)
+  // CRITICAL: WebSocket cleanup removed to prevent disconnect when Save is clicked (selectedIngredient set to null)
 
   // Auto Save Logic - Monitor weight and trigger auto save when conditions are met
   useEffect(() => {
@@ -1929,12 +2050,13 @@ function AppContent() {
       sessionNumber: ingredient.sessionNumber || null // CRITICAL: Preserve session number for this ingredient
     };
     
-    // CRITICAL: Set selected ingredient IMMEDIATELY to trigger zero check polling
-    // This starts polling right away without waiting for database fetch
-    setSelectedIngredient(ingredientWithSaved);
+    // CRITICAL: Update all states in correct order to prevent race condition
+    // React 18 will batch these updates automatically
+    // 1. First reset weighing state and currentWeight
+    setIsWeighingActive(false); // Stop weighing for previous ingredient
+    setCurrentWeight(0); // Reset currentWeight to 0 when switching ingredients
     
-    // IMPORTANT: Reset currentWeight for all other ingredients in recipe
-    // This prevents ingredients from changing when switching between them
+    // 2. Then update recipe state
     setRecipe(prev => prev.map(ing => {
       if (ing.id === ingredient.id) {
         // Update the selected ingredient with saved weight
@@ -1955,10 +2077,8 @@ function AppContent() {
       }
     }));
     
-    // Reset currentWeight to 0 when switching ingredients
-    setCurrentWeight(0);
-    setIsWeighingActive(false); // Stop weighing for previous ingredient
-    
+    // 3. Finally set ingredient and show modal together
+    // These should update in the same batch to prevent showing savedWeight before modal
     setSelectedIngredient(ingredientWithSaved);
     setShowProductVerification(true);
     // Don't reset zero check weight here - let it continue reading
@@ -1997,100 +2117,56 @@ function AppContent() {
   }
 
   // Handle start weighing button click from RightPanel
-  // OPTIMIZED: Uses fresh zero check on click instead of relying on continuous polling
+  // OPTIMIZED: Uses WebSocket zeroCheckWeight for real-time zero check
+  // WebSocket continuously updates zeroCheckWeight when ingredient is selected but not weighing
   const handleStartWeighingFromPanel = async () => {
     if (!selectedIngredient) {
       console.warn('⚠️ Cannot start weighing: selectedIngredient is null')
       return
     }
     
-    // OPTIMIZED: Do a fresh zero check on button click for accuracy
-    // This prevents issues with stale zeroCheckWeight values from slow polling
-    try {
-      const resp = await fetch('/api/scale/read')
-      if (resp.ok) {
-        const data = await resp.json()
-        if (data.success && data.weight !== undefined) {
-          const currentWeight = data.weight
-          const zeroThreshold = 0.5 // Allow ±0.5g tolerance for zero
-          const isZero = Math.abs(currentWeight) <= zeroThreshold
-          
-          // Update zeroCheckWeight with fresh value for display
-          setZeroCheckWeight(currentWeight)
-          
-          if (!isZero) {
-            // Don't start weighing if scale is not zero
-            alert.warning(`Timbangan belum zero! Nilai saat ini: ${currentWeight.toFixed(2)}g\n\nPastikan timbangan menunjukkan 0.00g sebelum memulai penimbangan.`, 'Timbangan Belum Zero')
-            return
-          }
-          
-          // Reset zero check weight and start weighing
-          setZeroCheckWeight(0)
-          // Start weighing process - update selectedIngredient first, then set isWeighingActive
-          const updatedIngredient = {...selectedIngredient, status: 'weighing'}
-          setSelectedIngredient(updatedIngredient)
-          // Update refs immediately to avoid race condition
-          selectedIngredientRef.current = updatedIngredient
-          isWeighingActiveRef.current = true
-          setIsWeighingActive(true) // Activate weighing to start scale polling
-          console.log('✅ Weighing started:', {
-            ingredient: updatedIngredient.name || updatedIngredient.product_name,
-            id: updatedIngredient.id,
-            hasWorkOrder: !!workOrder,
-            autoSaveEnabled: autoSaveConfig.enabled
-          })
-        } else {
-          // Fallback: Use existing zeroCheckWeight if fresh check fails
-          const zeroThreshold = 0.5
-          const isZero = Math.abs(zeroCheckWeight) <= zeroThreshold
-          
-          if (!isZero) {
-            alert.warning(`Timbangan belum zero! Nilai saat ini: ${zeroCheckWeight.toFixed(2)}g\n\nPastikan timbangan menunjukkan 0.00g sebelum memulai penimbangan.`, 'Timbangan Belum Zero')
-            return
-          }
-          
-          setZeroCheckWeight(0)
-          const updatedIngredient = {...selectedIngredient, status: 'weighing'}
-          setSelectedIngredient(updatedIngredient)
-          selectedIngredientRef.current = updatedIngredient
-          isWeighingActiveRef.current = true
-          setIsWeighingActive(true)
-        }
-      } else {
-        // Fallback: Use existing zeroCheckWeight if API call fails
-        const zeroThreshold = 0.5
-        const isZero = Math.abs(zeroCheckWeight) <= zeroThreshold
-        
-        if (!isZero) {
-          alert.warning(`Timbangan belum zero! Nilai saat ini: ${zeroCheckWeight.toFixed(2)}g\n\nPastikan timbangan menunjukkan 0.00g sebelum memulai penimbangan.`, 'Timbangan Belum Zero')
-          return
-        }
-        
-        setZeroCheckWeight(0)
-        const updatedIngredient = {...selectedIngredient, status: 'weighing'}
-        setSelectedIngredient(updatedIngredient)
-        selectedIngredientRef.current = updatedIngredient
-        isWeighingActiveRef.current = true
-        setIsWeighingActive(true)
-      }
-    } catch (error) {
-      // Fallback: Use existing zeroCheckWeight if error occurs
-      console.warn('⚠️ Failed to do fresh zero check, using existing value:', error)
-      const zeroThreshold = 0.5
-      const isZero = Math.abs(zeroCheckWeight) <= zeroThreshold
-      
-      if (!isZero) {
-        alert.warning(`Timbangan belum zero! Nilai saat ini: ${zeroCheckWeight.toFixed(2)}g\n\nPastikan timbangan menunjukkan 0.00g sebelum memulai penimbangan.`, 'Timbangan Belum Zero')
-        return
-      }
-      
-      setZeroCheckWeight(0)
-      const updatedIngredient = {...selectedIngredient, status: 'weighing'}
-      setSelectedIngredient(updatedIngredient)
-      selectedIngredientRef.current = updatedIngredient
-      isWeighingActiveRef.current = true
-      setIsWeighingActive(true)
+    // Use zeroCheckWeight from WebSocket (already updated in real-time)
+    // This is more reliable than HTTP fetch which can timeout
+    const zeroThreshold = 0.5 // Allow ±0.5g tolerance for zero
+    const currentZeroWeight = zeroCheckWeight // Use WebSocket value
+    
+    console.log('🔍 Zero check before starting weighing:', {
+      zeroCheckWeight: currentZeroWeight.toFixed(2) + 'g',
+      threshold: zeroThreshold + 'g',
+      isZero: Math.abs(currentZeroWeight) <= zeroThreshold
+    })
+    
+    const isZero = Math.abs(currentZeroWeight) <= zeroThreshold
+    
+    if (!isZero) {
+      // Don't start weighing if scale is not zero
+      alert.warning(
+        `Timbangan belum zero! Nilai saat ini: ${currentZeroWeight.toFixed(2)}g\n\nPastikan timbangan menunjukkan 0.00g sebelum memulai penimbangan.`, 
+        'Timbangan Belum Zero'
+      )
+      return
     }
+    
+    // Zero check passed - start weighing
+    // Reset zero check weight and start weighing
+    setZeroCheckWeight(0)
+    
+    // Start weighing process - update selectedIngredient first, then set isWeighingActive
+    const updatedIngredient = {...selectedIngredient, status: 'weighing'}
+    setSelectedIngredient(updatedIngredient)
+    
+    // Update refs immediately to avoid race condition
+    selectedIngredientRef.current = updatedIngredient
+    isWeighingActiveRef.current = true
+    setIsWeighingActive(true) // Activate weighing to start scale polling
+    
+    console.log('✅ Weighing started:', {
+      ingredient: updatedIngredient.name || updatedIngredient.product_name,
+      id: updatedIngredient.id,
+      hasWorkOrder: !!workOrder,
+      autoSaveEnabled: autoSaveConfig.enabled,
+      zeroCheckWeight: currentZeroWeight.toFixed(2) + 'g'
+    })
   }
 
   const handleStartScan = (type) => {
@@ -2195,6 +2271,11 @@ function AppContent() {
       setZeroCheckWeight(0) // Reset zero check weight for fresh start
       setShowMOScanModal(false)
       
+      // CRITICAL: Force WebSocket connection check after modal closes
+      // This ensures digital-weight display starts showing real-time data immediately
+      console.log('🔄 MO Scan Modal closed (Resume mode) - WebSocket should be active for digital-weight display')
+      console.log('📡 ScaleDisplayWeight:', scaleDisplayWeight, 'g - Should update continuously from WebSocket')
+      
       // Show resume notification with detailed info
       const completedCount = mapped.filter(ing => ing.status === 'completed').length
       const inProgressCount = mapped.filter(ing => {
@@ -2234,6 +2315,11 @@ function AppContent() {
     setIsWeighingActive(false)
     setZeroCheckWeight(0) // Reset zero check weight for fresh start
     setShowMOScanModal(false)
+    
+    // CRITICAL: Force WebSocket connection check after modal closes
+    // This ensures digital-weight display starts showing real-time data immediately
+    console.log('🔄 MO Scan Modal closed (New WO mode) - WebSocket should be active for digital-weight display')
+    console.log('📡 ScaleDisplayWeight:', scaleDisplayWeight, 'g - Should update continuously from WebSocket')
 
     // Try to check for existing progress on server (fallback check)
     (async () => {
@@ -2402,7 +2488,10 @@ function AppContent() {
       // This prevents accidentally processing other ingredients that shouldn't be updated
       // CRITICAL: Always include targetWeight (scaled) when saving
       // This ensures backend saves the scaled target_mass to database
-      const ingredientsToSave = selectedIngredient && currentWeight > 0
+      // Get operator name from currentUser
+    const operatorName = currentUser?.name || currentUser?.username || 'Operator';
+    
+    const ingredientsToSave = selectedIngredient && currentWeight > 0
         ? [{
             ...selectedIngredient,
             // Send only the current reading from scale (not accumulated)
@@ -2411,7 +2500,10 @@ function AppContent() {
             actualWeight: currentWeight,
             // CRITICAL: Explicitly include scaled targetWeight
             targetWeight: selectedIngredient.targetWeight || 0,
-            target_mass: selectedIngredient.targetWeight || 0
+            target_mass: selectedIngredient.targetWeight || 0,
+            // CRITICAL: Include expDate if available (from product verification modal)
+            expDate: selectedIngredient.expDate || null,
+            exp_date: selectedIngredient.expDate || null
           }]
         : recipe
             .filter(ing => {
@@ -2427,7 +2519,10 @@ function AppContent() {
               actualWeight: ing.currentWeight || 0,
               // CRITICAL: Explicitly include scaled targetWeight
               targetWeight: ing.targetWeight || 0,
-              target_mass: ing.targetWeight || 0
+              target_mass: ing.targetWeight || 0,
+              // CRITICAL: Include expDate if available (from product verification modal)
+              expDate: ing.expDate || null,
+              exp_date: ing.expDate || null
             }));
       
       // If no ingredients to save, show warning
@@ -2444,7 +2539,9 @@ function AppContent() {
           totalQuantity: workOrder.orderQty,
           completedIngredients: recipe.filter(ing => ing.status === 'completed').length,
           totalIngredients: recipe.length
-        }
+        },
+        operatorName: operatorName, // Include operator name from currentUser
+        operatorId: currentUser?.id || null // Include operator ID from currentUser for database reference
       };
       
       console.log('Saving progress for ingredients:', ingredientsToSave.map(ing => ({
@@ -2884,7 +2981,7 @@ function AppContent() {
   // Update refs when functions change - CRITICAL: This must run immediately
   useEffect(() => {
     handleSaveProgressRef.current = handleSaveProgress
-    console.log('✅ handleSaveProgressRef assigned:', !!handleSaveProgressRef.current)
+    // Removed excessive logging - only log when needed for debugging
   }, [handleSaveProgress])
 
   // Print receipt function - supports multiple print methods (Windows RAW, Network TCP/IP, COM Serial)
@@ -3069,6 +3166,7 @@ function AppContent() {
               onStartScan={handleStartScan}
               onStartMOScan={() => setShowMOScanModal(true)}
               isWeighingActive={isWeighingActive}
+              selectedIngredient={selectedIngredient}
             />
             <RightPanel 
               workOrder={workOrder}
@@ -3081,6 +3179,7 @@ function AppContent() {
               isWeighingActive={isWeighingActive}
               onPrintReceipt={handlePrintCurrentReceipt}
               onStartWeighing={handleStartWeighingFromPanel}
+              scaleDisplayWeight={scaleDisplayWeight}
               zeroCheckWeight={zeroCheckWeight}
               showProductVerification={showProductVerification}
             />
@@ -3097,6 +3196,15 @@ function AppContent() {
           currentUser={currentUser}
           onNavigateToDetail={(moNumber) => setCurrentPage(`history-detail-${moNumber}`)} 
         />
+      case 'user-management':
+        return <UserManagement 
+          currentUser={currentUser}
+          onAccessDenied={() => setCurrentPage('home')}
+        />
+      case 'weighing-receiver':
+        return <WeighingReceiverList 
+          onNavigateToDetail={(dataId) => setCurrentPage(`weighing-receiver-detail-${dataId}`)} 
+        />
       default:
         if (currentPage && currentPage.startsWith('history-detail-')) {
           const moNumber = currentPage.replace('history-detail-', '')
@@ -3104,6 +3212,13 @@ function AppContent() {
             moNumber={moNumber} 
             currentUser={currentUser}
             onBack={() => setCurrentPage('history')} 
+          />
+        }
+        if (currentPage && currentPage.startsWith('weighing-receiver-detail-')) {
+          const dataId = currentPage.replace('weighing-receiver-detail-', '')
+          return <WeighingReceiverDetail 
+            dataId={dataId}
+            onBack={() => setCurrentPage('weighing-receiver')} 
           />
         }
         return (
@@ -3115,6 +3230,7 @@ function AppContent() {
               onStartScan={handleStartScan}
               onStartMOScan={() => setShowMOScanModal(true)}
               isWeighingActive={isWeighingActive}
+              selectedIngredient={selectedIngredient}
             />
             <RightPanel 
               workOrder={workOrder}
@@ -3127,6 +3243,7 @@ function AppContent() {
               isWeighingActive={isWeighingActive}
               onPrintReceipt={handlePrintCurrentReceipt}
               onStartWeighing={handleStartWeighingFromPanel}
+              scaleDisplayWeight={scaleDisplayWeight}
               zeroCheckWeight={zeroCheckWeight}
               showProductVerification={showProductVerification}
             />
@@ -3175,6 +3292,7 @@ function AppContent() {
           onStartMOScan={() => setShowMOScanModal(true)}
           currentPage={currentPage}
           onPageChange={handlePageChange}
+          currentUser={currentUser}
         />
         {renderCurrentPage()}
       </div>

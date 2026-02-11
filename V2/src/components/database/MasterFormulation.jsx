@@ -193,6 +193,18 @@ const MasterFormulation = () => {
     loadServerConfigurations()
   }, [])
 
+  // Listen for database_updated event to refresh data after import
+  useEffect(() => {
+    const handleDatabaseUpdate = () => {
+      console.log('🔄 Database updated event received, refreshing formulations and ingredients...')
+      loadFormulations()
+      loadProducts()
+    }
+
+    window.addEventListener('database_updated', handleDatabaseUpdate)
+    return () => window.removeEventListener('database_updated', handleDatabaseUpdate)
+  }, [])
+
   // Load formulations from API
   const loadFormulations = async () => {
     try {

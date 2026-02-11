@@ -6,7 +6,7 @@ const Header = ({ currentUser, onRefresh, onLogout }) => {
     <div className="header">
       <div className="logo">
         <Scale size={32} />
-        <span>Foom Lab Global</span>
+        <span>CV Wangsa Aguna</span>
       </div>
       
       <button className="refresh-btn" onClick={onRefresh}>

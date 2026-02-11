@@ -172,3 +172,5 @@ Jika masih ada jitter:
 
 
 
+
+

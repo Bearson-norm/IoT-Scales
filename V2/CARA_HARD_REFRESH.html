@@ -1,0 +1,254 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Cara Hard Refresh Browser - Fix Display-Weight Freeze</title>
+    <style>
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            max-width: 900px;
+            margin: 0 auto;
+            padding: 20px;
+            background: #f5f5f5;
+            line-height: 1.6;
+        }
+        .container {
+            background: white;
+            padding: 30px;
+            border-radius: 10px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+        h1 {
+            color: #2563eb;
+            border-bottom: 3px solid #2563eb;
+            padding-bottom: 10px;
+        }
+        h2 {
+            color: #059669;
+            margin-top: 30px;
+        }
+        .problem {
+            background: #fee2e2;
+            border-left: 4px solid #dc2626;
+            padding: 15px;
+            margin: 20px 0;
+        }
+        .solution {
+            background: #d1fae5;
+            border-left: 4px solid #059669;
+            padding: 15px;
+            margin: 20px 0;
+        }
+        .method {
+            background: #f0f9ff;
+            border: 2px solid #3b82f6;
+            border-radius: 8px;
+            padding: 20px;
+            margin: 20px 0;
+        }
+        .shortcut {
+            background: #1e3a8a;
+            color: white;
+            padding: 10px 20px;
+            border-radius: 5px;
+            font-size: 20px;
+            font-weight: bold;
+            display: inline-block;
+            margin: 10px 0;
+            font-family: 'Courier New', monospace;
+        }
+        .step {
+            background: #fef3c7;
+            border-left: 4px solid #f59e0b;
+            padding: 10px;
+            margin: 10px 0;
+        }
+        .verify {
+            background: #e0e7ff;
+            border: 2px dashed #4f46e5;
+            padding: 15px;
+            margin: 20px 0;
+        }
+        .warning {
+            background: #fef2f2;
+            border: 2px solid #dc2626;
+            padding: 15px;
+            margin: 20px 0;
+            border-radius: 5px;
+        }
+        ul {
+            margin-left: 20px;
+        }
+        li {
+            margin: 10px 0;
+        }
+        .filename {
+            background: #1f2937;
+            color: #10b981;
+            padding: 3px 8px;
+            border-radius: 3px;
+            font-family: 'Courier New', monospace;
+            font-size: 14px;
+        }
+        .check {
+            color: #059669;
+            font-weight: bold;
+        }
+        .cross {
+            color: #dc2626;
+            font-weight: bold;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🔧 Cara Hard Refresh Browser untuk Fix Display-Weight Freeze</h1>
+        
+        <div class="problem">
+            <h3>❌ Masalah yang Terjadi:</h3>
+            <ul>
+                <li>Display-weight freeze di "1.1 g" sebelum Start penimbangan kedua</li>
+                <li>Angka baru berubah setelah klik tombol "Start"</li>
+                <li>Display-weight tidak menampilkan nilai real-time dari scale</li>
+            </ul>
+        </div>
+
+        <div class="solution">
+            <h3>✅ Penyebab & Solusi:</h3>
+            <p><strong>Penyebab:</strong> Browser masih menggunakan file JavaScript lama (<span class="filename">index-f7d163b7.js</span>)</p>
+            <p><strong>Solusi:</strong> Hard refresh browser untuk load file baru (<span class="filename">index-234013b9.js</span>)</p>
+        </div>
+
+        <h2>🚀 Cara 1: Hard Refresh (Paling Mudah)</h2>
+        <div class="method">
+            <p>Tekan tombol berikut BERSAMAAN:</p>
+            <div class="shortcut">Ctrl + Shift + R</div>
+            <p><strong>ATAU</strong></p>
+            <div class="shortcut">Ctrl + F5</div>
+            <br>
+            <div class="step">
+                <strong>Langkah-langkah:</strong>
+                <ol>
+                    <li>Buka aplikasi di browser (http://localhost:3001)</li>
+                    <li>Tekan <strong>Ctrl + Shift + R</strong></li>
+                    <li>TUNGGU 3-5 detik sampai halaman reload sepenuhnya</li>
+                    <li>Halaman akan refresh dengan file JavaScript baru</li>
+                </ol>
+            </div>
+        </div>
+
+        <h2>🧹 Cara 2: Clear Cache & Hard Reload (Jika Cara 1 Gagal)</h2>
+        <div class="method">
+            <p><strong>Untuk Chrome / Edge:</strong></p>
+            <ol>
+                <li>Tekan <strong>F12</strong> untuk buka Developer Tools</li>
+                <li><strong>KLIK KANAN</strong> pada tombol Refresh (⟳) di browser</li>
+                <li>Pilih <strong>"Empty Cache and Hard Reload"</strong></li>
+                <li>TUNGGU sampai reload selesai</li>
+                <li>Tekan F12 lagi untuk tutup Developer Tools</li>
+            </ol>
+            <br>
+            <img src="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='400' height='150'%3E%3Crect width='400' height='150' fill='%23f3f4f6'/%3E%3Ctext x='200' y='75' text-anchor='middle' font-family='Arial' font-size='14' fill='%23374151'%3EKlik kanan tombol Refresh → Empty Cache and Hard Reload%3C/text%3E%3C/svg%3E" alt="Empty Cache and Hard Reload" style="max-width: 100%; margin: 10px 0;">
+        </div>
+
+        <h2>🔒 Cara 3: Incognito Mode (Paling Pasti)</h2>
+        <div class="method">
+            <p>Gunakan mode Incognito/Private untuk bypass cache sepenuhnya:</p>
+            <ol>
+                <li>Tutup tab aplikasi yang lama</li>
+                <li>Buka <strong>NEW INCOGNITO/PRIVATE WINDOW</strong>:
+                    <ul>
+                        <li>Chrome/Edge: <span class="shortcut" style="font-size: 14px;">Ctrl + Shift + N</span></li>
+                        <li>Firefox: <span class="shortcut" style="font-size: 14px;">Ctrl + Shift + P</span></li>
+                    </ul>
+                </li>
+                <li>Ketik: <strong>http://localhost:3001</strong></li>
+                <li>Login dan test aplikasi</li>
+            </ol>
+            <div class="warning">
+                <strong>⚠️ Catatan:</strong> Mode Incognito tidak menyimpan cache, jadi PASTI menggunakan file terbaru.
+            </div>
+        </div>
+
+        <h2>✅ Cara Verifikasi Build Baru Sudah Loaded</h2>
+        <div class="verify">
+            <p><strong>Pastikan browser sudah load file JavaScript baru:</strong></p>
+            <ol>
+                <li>Buka Developer Tools: Tekan <strong>F12</strong></li>
+                <li>Klik tab <strong>"Network"</strong></li>
+                <li>Refresh halaman: Tekan <strong>F5</strong></li>
+                <li>Cari file <strong>"index-*.js"</strong> di list</li>
+                <li>Pastikan nama file:
+                    <ul>
+                        <li><span class="check">✅ BENAR:</span> <span class="filename">index-234013b9.js</span> (build baru)</li>
+                        <li><span class="cross">❌ SALAH:</span> <span class="filename">index-f7d163b7.js</span> (build lama)</li>
+                    </ul>
+                </li>
+            </ol>
+            <p><strong>Jika masih load file lama:</strong> Gunakan Cara 2 (Clear Cache) atau Cara 3 (Incognito Mode)</p>
+        </div>
+
+        <h2>🧪 Test Setelah Hard Refresh</h2>
+        <div class="method">
+            <p><strong>Test untuk memastikan freeze sudah fixed:</strong></p>
+            <ol>
+                <li>Login ke aplikasi</li>
+                <li>Pilih ingredient pertama → Start → Timbang → Complete</li>
+                <li>Pilih ingredient kedua</li>
+                <li><strong>LIHAT digital-weight:</strong>
+                    <ul>
+                        <li><span class="check">✅ BENAR:</span> Menampilkan nilai real-time (misalnya "0.5 g", "0.0 g")</li>
+                        <li><span class="cross">❌ SALAH:</span> Freeze di "1.1 g"</li>
+                    </ul>
+                </li>
+                <li>Letakkan beban di scale (<strong>JANGAN klik Start dulu</strong>)</li>
+                <li><strong>LIHAT digital-weight:</strong>
+                    <ul>
+                        <li><span class="check">✅ BENAR:</span> Angka update TANPA klik Start</li>
+                        <li><span class="cross">❌ SALAH:</span> Angka tidak update sampai klik Start</li>
+                    </ul>
+                </li>
+            </ol>
+        </div>
+
+        <h2>❓ Troubleshooting</h2>
+        <div class="method">
+            <h3>Q: Sudah hard refresh tapi masih freeze?</h3>
+            <p><strong>A:</strong> Coba langkah berikut secara berurutan:</p>
+            <ol>
+                <li>Clear browser cache (Cara 2)</li>
+                <li>Close semua tab browser</li>
+                <li>Buka ulang browser</li>
+                <li>Gunakan Incognito mode (Cara 3)</li>
+            </ol>
+
+            <h3>Q: Bagaimana tau sudah load build baru?</h3>
+            <p><strong>A:</strong> Check di Developer Tools → Network → File harus <span class="filename">index-234013b9.js</span></p>
+
+            <h3>Q: Incognito mode juga masih freeze?</h3>
+            <p><strong>A:</strong> Berarti ada masalah lain. Check:</p>
+            <ul>
+                <li>Server masih running? (Check terminal)</li>
+                <li>WebSocket connected? (Check console browser)</li>
+                <li>Ada error di console?</li>
+            </ul>
+        </div>
+
+        <div class="solution">
+            <h2>📝 Kesimpulan</h2>
+            <p>✅ Build baru: <span class="filename">index-234013b9.js</span></p>
+            <p>✅ Server: <strong>http://localhost:3001</strong></p>
+            <p>✅ Status: <strong>READY TO TEST</strong></p>
+            <br>
+            <p><strong>Yang Perlu Dilakukan:</strong></p>
+            <ol>
+                <li><strong>Hard refresh browser:</strong> Ctrl + Shift + R</li>
+                <li><strong>Verifikasi hash:</strong> index-234013b9.js</li>
+                <li><strong>Test skenario:</strong> Pilih ingredient → Complete → Pilih ingredient baru</li>
+                <li><strong>Konfirmasi:</strong> Display-weight tidak freeze, real-time sebelum Start</li>
+            </ol>
+        </div>
+    </div>
+</body>
+</html>

@@ -119,6 +119,8 @@ const filesToCopy = [
   { from: 'README.md', to: 'README.md' },
   { from: 'LICENSE', to: 'LICENSE', optional: true },
   { from: 'setup-database.bat', to: 'setup-database.bat', optional: false },
+  { from: 'printer-config.json', to: 'printer-config.json', optional: true },
+  { from: 'scale-config.json', to: 'scale-config.json', optional: true },
   // Serialport modules - copy complete with all dependencies
   { from: 'node_modules/serialport', to: 'node_modules/serialport', checkNative: false },
   { from: 'node_modules/@serialport', to: 'node_modules/@serialport', optional: false },

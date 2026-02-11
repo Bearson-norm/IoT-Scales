@@ -1,0 +1,34 @@
+================================
+DEBUG STEPS UNTUK USER
+================================
+
+TOLONG LAKUKAN LANGKAH BERIKUT DAN SCREENSHOT HASILNYA:
+
+1. BUKA CONSOLE BROWSER
+   - Tekan F12
+   - Klik tab "Console"
+   - Screenshot semua log yang ada (scroll ke atas untuk lihat semua)
+   
+2. CHECK WEBSOCKET MESSAGES
+   - Masih di F12
+   - Klik tab "Network"
+   - Klik "WS" (WebSocket) di filter bar
+   - Klik pada koneksi "scale"
+   - Klik tab "Messages"
+   - Screenshot messages yang ada
+   
+3. REPRODUCE MASALAH DENGAN CONSOLE TERBUKA
+   - Biarkan Console tab terbuka
+   - Complete weighing ingredient pertama
+   - Pilih ingredient kedua
+   - JANGAN klik Start dulu
+   - Tunggu 2-3 detik
+   - Screenshot console log
+   
+4. CHECK WEBSOCKET STATUS
+   - Tab Network → WS
+   - Lihat status koneksi WebSocket
+   - Screenshot status
+
+KIRIM SEMUA SCREENSHOT INI SUPAYA SAYA BISA ANALISIS!
+================================

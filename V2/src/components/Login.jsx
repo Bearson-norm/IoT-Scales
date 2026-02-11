@@ -1,6 +1,43 @@
 import React, { useState } from 'react'
 import { User, Lock, LogIn, Eye, EyeOff } from 'lucide-react'
 
+// Resolve API base URL dynamically + log so kita tahu kemana request dikirim
+let API_BASE_URL = 'http://localhost:3001/api'
+const resolveApiBaseUrl = () => {
+  const log = (msg) => console.log(`[LOGIN] ${msg}`)
+  try {
+    if (typeof window !== 'undefined' && window.__API_BASE_URL__) {
+      API_BASE_URL = window.__API_BASE_URL__
+      log(`Using window.__API_BASE_URL__: ${API_BASE_URL}`)
+      return API_BASE_URL
+    }
+    const viteUrl = typeof import.meta !== 'undefined' && import.meta.env?.VITE_API_BASE_URL
+    if (viteUrl) {
+      API_BASE_URL = viteUrl
+      log(`Using VITE_API_BASE_URL: ${API_BASE_URL}`)
+      return API_BASE_URL
+    }
+
+    if (typeof window !== 'undefined') {
+      const { protocol, hostname, port, origin } = window.location
+      if (port && port !== '3001') {
+        API_BASE_URL = `${protocol}//${hostname}:3001/api`
+        log(`Using port 3001 fallback: ${API_BASE_URL}`)
+        return API_BASE_URL
+      }
+      API_BASE_URL = `${origin}/api`
+      log(`Using same-origin /api: ${API_BASE_URL}`)
+      return API_BASE_URL
+    }
+  } catch (e) {
+    console.warn('[LOGIN] resolveApiBaseUrl error:', e)
+  }
+  log(`Fallback: ${API_BASE_URL}`)
+  return API_BASE_URL
+}
+
+API_BASE_URL = resolveApiBaseUrl()
+
 const Login = ({ onLogin }) => {
   const [username, setUsername] = useState('')
   const [password, setPassword] = useState('')
@@ -8,31 +45,35 @@ const Login = ({ onLogin }) => {
   const [isLoading, setIsLoading] = useState(false)
   const [error, setError] = useState('')
 
-  // Mock users data
-  const mockUsers = [
-    { username: 'faliq', password: '123456', name: 'Faliq', role: 'Operator' },
-    { username: 'admin', password: 'admin123', name: 'Administrator', role: 'Admin' },
-    { username: 'operator1', password: 'op123', name: 'Operator 1', role: 'Operator' },
-    { username: 'supervisor', password: 'sup123', name: 'Supervisor', role: 'Supervisor' },
-    { username: 'qc', password: 'qc123', name: 'QC Officer', role: 'QC' }
-  ]
-
   const handleSubmit = async (e) => {
     e.preventDefault()
     setIsLoading(true)
     setError('')
 
-    // Simulate API call delay
-    setTimeout(() => {
-      const user = mockUsers.find(u => u.username === username && u.password === password)
-      
-      if (user) {
-        onLogin(user)
-      } else {
-        setError('Username atau password salah!')
+    try {
+      console.log('[LOGIN] POST', `${API_BASE_URL}/auth/login`)
+      const resp = await fetch(`${API_BASE_URL}/auth/login`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ username: username.trim(), password })
+      })
+
+      const data = await resp.json()
+
+      if (!data.success) {
+        setError(data.error || 'Username atau password salah!')
         setIsLoading(false)
+        return
       }
-    }, 1500)
+
+      const user = data.user
+      onLogin(user)
+    } catch (err) {
+      console.error('Login error:', err)
+      setError('Gagal login. Periksa koneksi atau hubungi admin.')
+    } finally {
+      setIsLoading(false)
+    }
   }
 
   return (
@@ -43,7 +84,7 @@ const Login = ({ onLogin }) => {
             <div className="logo-icon">
               <User size={48} />
             </div>
-            <h1>Foom Lab Global</h1>
+            <h1>Wangsa Aguna</h1>
             <p>Manufacturing Weighing System</p>
           </div>
         </div>
@@ -114,7 +155,7 @@ const Login = ({ onLogin }) => {
         </form>
 
         <div className="login-footer">
-          <p>v1.7.0 - PRESISITECH</p>
+          <p>v1.7.0 - Wangsa Aguna</p>
         </div>
       </div>
     </div>

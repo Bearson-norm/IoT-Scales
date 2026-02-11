@@ -1,0 +1,87 @@
+===============================================
+JIKA WRAPPER MASIH TIDAK BISA
+===============================================
+
+Jika setup-database-debug.bat masih langsung tertutup,
+ikuti langkah ini:
+
+===============================================
+LANGKAH 1: TEST FILE SEDERHANA
+===============================================
+
+Double-click file ini:
+>>> test-basic.bat <<<
+
+JIKA BISA TERBUKA:
+  - Bagus! Lanjut ke Langkah 2
+
+JIKA MASIH TERTUTUP:
+  - Ada masalah Antivirus atau Permission
+  - Lanjut ke Langkah 3
+
+===============================================
+LANGKAH 2: GUNAKAN WRAPPER YANG LEBIH SAFE
+===============================================
+
+Double-click file ini:
+>>> setup-database-SAFE.bat <<<
+
+File ini PASTI akan terbuka dan menampilkan error.
+
+===============================================
+LANGKAH 3: GUNAKAN COMMAND PROMPT (100% PASTI)
+===============================================
+
+1. Tekan Windows Key
+2. Ketik: cmd
+3. Tekan Enter
+4. Ketik: cd C:\path\to\V2
+   (Ubah path sesuai lokasi folder V2 Anda!)
+5. Ketik: setup-database.bat
+6. Tekan Enter
+
+SEKARANG ANDA PASTI BISA LIHAT ERROR!
+
+===============================================
+DOKUMENTASI LENGKAP
+===============================================
+
+Baca file ini untuk panduan lengkap:
+>>> SOLUSI_WINDOW_LANGSUNG_TERTUTUP.md <<<
+
+Atau mulai dari sini:
+>>> START_HERE.md <<<
+
+===============================================
+FILE YANG TERSEDIA
+===============================================
+
+Test Files:
+  - test-basic.bat                 (Test sederhana)
+  
+Setup Files (Pilih salah satu):
+  - setup-database-SAFE.bat        (PALING AMAN, gunakan ini!)
+  - setup-database-debug.bat       (Wrapper dengan debug)
+  - setup-database.bat             (Original, dari cmd)
+
+Dokumentasi:
+  - SOLUSI_WINDOW_LANGSUNG_TERTUTUP.md
+  - START_HERE.md
+  - PANDUAN_SETUP_DATABASE.md
+  - QUICK_FIX_SETUP_DATABASE.md
+
+===============================================
+REKOMENDASI TERBAIK
+===============================================
+
+Untuk device baru, SELALU gunakan Command Prompt:
+
+  cmd → cd path\to\V2 → setup-database.bat
+
+Jangan langsung double-click .bat file!
+
+===============================================
+
+
+
+

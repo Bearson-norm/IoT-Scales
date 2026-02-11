@@ -1,13 +1,50 @@
 import React from 'react'
 import { QrCode, Package } from 'lucide-react'
 
-const RecipePanel = ({ workOrder, recipe, onIngredientClick, onStartScan, onStartMOScan, isWeighingActive }) => {
+const RecipePanel = ({ workOrder, recipe, onIngredientClick, onStartScan, onStartMOScan, isWeighingActive, selectedIngredient }) => {
   const getStatusCounts = () => {
     if (!recipe.length) return { completed: 0, pending: 0, empty: 0, total: 0 }
     
-    const completed = recipe.filter(item => item.status === 'completed').length
-    const pending = recipe.filter(item => item.status === 'pending').length
-    const empty = recipe.filter(item => item.status === 'empty').length
+    let completed = 0
+    let pending = 0
+    let empty = 0
+    
+    recipe.forEach(item => {
+      const savedWeight = parseFloat(item.savedWeight || 0) || 0
+      const currentWeight = parseFloat(item.currentWeight || 0) || 0
+      const totalWeight = item.totalWeight || (savedWeight + currentWeight)
+      const targetWeight = parseFloat(item.targetWeight || 0) || 0
+      
+      // Check if completed (by status or by weight within tolerance)
+      if (item.status === 'completed') {
+        completed++
+        return
+      }
+      
+      // Check if within tolerance range (completed)
+      if (targetWeight > 0) {
+        const toleranceMin = item.toleranceMin !== undefined && item.toleranceMin !== null
+          ? parseFloat(item.toleranceMin)
+          : Math.max(0, targetWeight - 3)
+        const toleranceMax = item.toleranceMax !== undefined && item.toleranceMax !== null
+          ? parseFloat(item.toleranceMax)
+          : targetWeight + 3
+        
+        if (totalWeight >= toleranceMin && totalWeight <= toleranceMax) {
+          completed++
+          return
+        }
+      }
+      
+      // Check if empty (no weight at all - hasn't been started)
+      if (savedWeight === 0 && currentWeight === 0 && totalWeight === 0) {
+        empty++
+        return
+      }
+      
+      // Otherwise, it's pending (has some weight but not completed)
+      pending++
+    })
     
     return { completed, pending, empty, total: recipe.length }
   }
@@ -17,12 +54,44 @@ const RecipePanel = ({ workOrder, recipe, onIngredientClick, onStartScan, onStar
   const getProgressPercentage = (ingredient) => {
     if (!ingredient || ingredient.targetWeight === 0) return 0
     
-    // Progress bar: Always show savedWeight + currentWeight (total accumulated)
-    // This ensures progress bar reflects real-time weighing progress
-    // CRITICAL: Use parseFloat to ensure numeric calculation, not string concatenation
+    // CRITICAL: Only use currentWeight for the ingredient that is currently being weighed
+    // For completed ingredients or other ingredients, only use savedWeight
+    // This prevents progress bar from changing for completed ingredients when weighing another ingredient
+    
     const savedWeight = parseFloat(ingredient.savedWeight || 0) || 0
     const currentWeight = parseFloat(ingredient.currentWeight || 0) || 0
-    const totalWeight = savedWeight + currentWeight  // Always calculate from saved + current
+    
+    // Check if this ingredient is the one currently being weighed
+    const isCurrentlyActive = selectedIngredient && (
+      selectedIngredient.id === ingredient.id ||
+      selectedIngredient.code === ingredient.code ||
+      (selectedIngredient.name && selectedIngredient.name === ingredient.name)
+    )
+    
+    // Check if ingredient is completed
+    const isCompleted = ingredient.status === 'completed' || 
+      (ingredient.targetWeight > 0 && 
+       ingredient.toleranceMin !== undefined && 
+       ingredient.toleranceMax !== undefined &&
+       savedWeight >= ingredient.toleranceMin && 
+       savedWeight <= ingredient.toleranceMax)
+    
+    // CRITICAL: Only include currentWeight if:
+    // 1. This ingredient is currently active AND weighing is active, OR
+    // 2. This ingredient is not completed (to show progress while weighing)
+    // For completed ingredients, only use savedWeight to prevent visual changes
+    let totalWeight
+    if (isCompleted) {
+      // Completed ingredients: Only use savedWeight (don't include currentWeight)
+      // This ensures progress bar doesn't change when weighing other ingredients
+      totalWeight = savedWeight
+    } else if (isCurrentlyActive && isWeighingActive) {
+      // Currently active ingredient: Use savedWeight + currentWeight for real-time progress
+      totalWeight = savedWeight + currentWeight
+    } else {
+      // Other ingredients: Only use savedWeight (currentWeight should be 0 anyway)
+      totalWeight = savedWeight
+    }
     
     // Calculate percentage, ensure it doesn't exceed 100%
     const progressPercent = ingredient.targetWeight > 0 
@@ -69,28 +138,43 @@ const RecipePanel = ({ workOrder, recipe, onIngredientClick, onStartScan, onStar
     return 'pending'
   }
   
-  // Debug: Log recipe changes to verify updates
+  // Debug: Log recipe changes to verify updates (reduced logging)
   React.useEffect(() => {
-    if (recipe.length > 0) {
-      recipe.forEach(ing => {
-        if (ing.savedWeight > 0) {
-          console.log(`📋 RecipePanel received recipe update for ${ing.name}:`, {
-            savedWeight: ing.savedWeight,
-            targetWeight: ing.targetWeight,
-            currentWeight: ing.currentWeight,
-            totalWeight: ing.totalWeight
-          })
-        }
-      })
-    }
+    // Only log significant changes to reduce console spam
+    // Removed frequent logging - only log when needed for debugging
   }, [recipe])
   
   const getDisplayWeight = (ingredient) => {
-    // Display total weight (savedWeight + currentWeight) to match progress bar
-    // This ensures weight display matches the progress bar calculation
+    // Display weight should match progress bar calculation
+    // Only show currentWeight for the ingredient that is currently being weighed
     const savedWeight = parseFloat(ingredient.savedWeight || 0) || 0
     const currentWeight = parseFloat(ingredient.currentWeight || 0) || 0
-    const totalWeight = savedWeight + currentWeight  // Match progress bar calculation
+    
+    // Check if this ingredient is the one currently being weighed
+    const isCurrentlyActive = selectedIngredient && (
+      selectedIngredient.id === ingredient.id ||
+      selectedIngredient.code === ingredient.code ||
+      (selectedIngredient.name && selectedIngredient.name === ingredient.name)
+    )
+    
+    // Check if ingredient is completed
+    const isCompleted = ingredient.status === 'completed' || 
+      (ingredient.targetWeight > 0 && 
+       ingredient.toleranceMin !== undefined && 
+       ingredient.toleranceMax !== undefined &&
+       savedWeight >= ingredient.toleranceMin && 
+       savedWeight <= ingredient.toleranceMax)
+    
+    // Match progress bar calculation: only include currentWeight for active ingredient
+    let totalWeight
+    if (isCompleted) {
+      totalWeight = savedWeight
+    } else if (isCurrentlyActive && isWeighingActive) {
+      totalWeight = savedWeight + currentWeight
+    } else {
+      totalWeight = savedWeight
+    }
+    
     return totalWeight
   }
 
@@ -110,7 +194,7 @@ const RecipePanel = ({ workOrder, recipe, onIngredientClick, onStartScan, onStar
           <span>Empty</span>
         </div>
         <div className="status-item">
-          <div className="status-icon completed">{statusCounts.total}</div>
+          <div className="status-icon total">{statusCounts.total}</div>
           <span>Total</span>
         </div>
       </div>
@@ -167,18 +251,8 @@ const RecipePanel = ({ workOrder, recipe, onIngredientClick, onStartScan, onStar
             // But primary key is still ingredient.id to maintain component identity
             const uniqueKey = `${ingredient.id || ingredient.code || index}-${ingredient.savedWeight || 0}-${ingredient.currentWeight || 0}`
             
-            // Debug: Log when ingredient has currentWeight to track which one is being updated
-            if (ingredient.currentWeight > 0) {
-              console.log(`📊 RecipePanel rendering ingredient with currentWeight:`, {
-                name: ingredient.name,
-                id: ingredient.id,
-                code: ingredient.code,
-                currentWeight: ingredient.currentWeight,
-                savedWeight: ingredient.savedWeight,
-                progress: progress.toFixed(1) + '%',
-                key: uniqueKey
-              })
-            }
+            // Debug: Log when ingredient has currentWeight (reduced logging - only log significant changes)
+            // Removed frequent logging to reduce console spam
             
             return (
               <div
