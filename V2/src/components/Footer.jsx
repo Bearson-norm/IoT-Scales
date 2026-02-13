@@ -5,7 +5,7 @@ const Footer = ({ currentTime }) => {
     <div className="footer">
       <div className="version">v1.7.0</div>
       <div className="time">{currentTime}</div>
-      <div className="company">Wangsa Aguna</div>
+      <div className="company">Kebanggaan Masyarakat Indonesia</div>
     </div>
   )
 }

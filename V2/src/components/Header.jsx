@@ -6,7 +6,7 @@ const Header = ({ currentUser, onRefresh, onLogout }) => {
     <div className="header">
       <div className="logo">
         <Scale size={32} />
-        <span>CV Wangsa Aguna</span>
+        <span>PT Kebanggaan Masyarakat Indonesia</span>
       </div>
       
       <button className="refresh-btn" onClick={onRefresh}>

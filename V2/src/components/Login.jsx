@@ -1,5 +1,6 @@
 import React, { useState } from 'react'
 import { User, Lock, LogIn, Eye, EyeOff } from 'lucide-react'
+import logoImage from '../assets/logo-km.jpeg'
 
 // Resolve API base URL dynamically + log so kita tahu kemana request dikirim
 let API_BASE_URL = 'http://localhost:3001/api'
@@ -82,9 +83,9 @@ const Login = ({ onLogin }) => {
         <div className="login-header">
           <div className="logo-section">
             <div className="logo-icon">
-              <User size={48} />
+              <img src={logoImage} alt="KM Logo" />
             </div>
-            <h1>Wangsa Aguna</h1>
+            <h1>Kebanggaan Masyarakat Indonesia</h1>
             <p>Manufacturing Weighing System</p>
           </div>
         </div>
@@ -155,7 +156,7 @@ const Login = ({ onLogin }) => {
         </form>
 
         <div className="login-footer">
-          <p>v1.7.0 - Wangsa Aguna</p>
+          <p>v1.7.0 - Kebanggaan Masyarakat Indonesia</p>
         </div>
       </div>
     </div>

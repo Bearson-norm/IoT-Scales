@@ -7,7 +7,7 @@
 
 body {
     font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    background: linear-gradient(135deg, #4a7c59 0%, #2d5016 100%);
     min-height: 100vh;
     color: #333;
     line-height: 1.6;
@@ -170,7 +170,7 @@ body {
     text-align: center;
     margin-bottom: 20px;
     padding: 30px;
-    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    background: linear-gradient(135deg, #4a7c59 0%, #2d5016 100%);
     border-radius: 12px;
     color: white;
 }
@@ -337,8 +337,8 @@ body {
 .settings-group input:focus,
 .settings-group select:focus {
     outline: none;
-    border-color: #667eea;
-    box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.1);
+    border-color: #4a7c59;
+    box-shadow: 0 0 0 3px rgba(74, 124, 89, 0.1);
 }
 
 /* Button Styles */
@@ -364,12 +364,12 @@ body {
 }
 
 .btn-primary {
-    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    background: linear-gradient(135deg, #4a7c59 0%, #2d5016 100%);
     color: white;
 }
 
 .btn-primary:hover {
-    background: linear-gradient(135deg, #5a67d8 0%, #6b46c1 100%);
+    background: linear-gradient(135deg, #2d5016 0%, #1b4332 100%);
 }
 
 .btn-secondary {
@@ -647,7 +647,7 @@ body {
 input:focus,
 select:focus,
 button:focus {
-    outline: 2px solid #667eea;
+    outline: 2px solid #4a7c59;
     outline-offset: 2px;
 }
 

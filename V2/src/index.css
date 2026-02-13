@@ -6,7 +6,7 @@
 
 body {
   font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-  background-color: #f5f5f5;
+  background-color: #f1f8f4;
   overflow-x: hidden;
   overflow-y: auto;
 }
@@ -20,11 +20,11 @@ body {
   display: flex;
   flex-direction: column;
   height: 100vh;
-  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  background: linear-gradient(135deg, #4a7c59 0%, #2d5016 100%);
 }
 
 .header {
-  background: linear-gradient(135deg, #2c3e50 0%, #34495e 100%);
+  background: linear-gradient(135deg, #1b4332 0%, #2d5016 100%);
   color: white;
   padding: 15px 20px;
   display: flex;
@@ -42,7 +42,7 @@ body {
 }
 
 .refresh-btn {
-  background: #3498db;
+  background: #4a7c59;
   border: none;
   color: white;
   padding: 10px;
@@ -52,7 +52,7 @@ body {
 }
 
 .refresh-btn:hover {
-  background: #2980b9;
+  background: #2d5016;
 }
 
 
@@ -63,7 +63,7 @@ body {
 }
 
 .user-info {
-  background: #e74c3c;
+  background: #4a7c59;
   color: white;
   padding: 8px 15px;
   border-radius: 20px;
@@ -92,7 +92,7 @@ body {
 }
 
 .logout-btn:hover {
-  background: #e74c3c;
+  background: #2d5016;
   transform: translateY(-1px);
 }
 
@@ -113,8 +113,8 @@ body {
 
 .left-panel-thin {
   width: 80px;
-  background: #2c3e50;
-  border-right: 3px solid #34495e;
+  background: #1b4332;
+  border-right: 3px solid #2d5016;
   display: flex;
   flex-direction: column;
   position: fixed;
@@ -125,7 +125,7 @@ body {
 }
 
 .navigation {
-  background: #34495e;
+  background: #2d5016;
   padding: 20px 10px;
   display: flex;
   flex-direction: column;
@@ -141,7 +141,7 @@ body {
 }
 
 .nav-item {
-  background: #2c3e50;
+  background: #1b4332;
   color: white;
   border: none;
   padding: 15px;
@@ -154,20 +154,20 @@ body {
 }
 
 .nav-item:hover {
-  background: #3498db;
+  background: #4a7c59;
 }
 
 .nav-item.active {
-  background: #e74c3c;
+  background: #6b9f78;
 }
 
 .nav-item:hover {
-  background: #3498db;
+  background: #4a7c59;
   transform: translateX(5px);
 }
 
 .nav-item.active:hover {
-  background: #c0392b;
+  background: #2d5016;
 }
 
 .nav-item-thin {
@@ -187,18 +187,18 @@ body {
 }
 
 .nav-item-thin:hover {
-  background: #34495e;
+  background: #2d5016;
   color: white;
   transform: scale(1.1);
 }
 
 .nav-item-thin.active {
-  background: #e74c3c;
+  background: #6b9f78;
   color: white;
 }
 
 .nav-item-thin.active:hover {
-  background: #c0392b;
+  background: #4a7c59;
 }
 
 .nav-item-thin::after {
@@ -207,7 +207,7 @@ body {
   left: 60px;
   top: 50%;
   transform: translateY(-50%);
-  background: #2c3e50;
+  background: #1b4332;
   color: white;
   padding: 8px 12px;
   border-radius: 6px;
@@ -227,7 +227,7 @@ body {
   top: 50%;
   transform: translateY(-50%);
   border: 5px solid transparent;
-  border-right-color: #2c3e50;
+  border-right-color: #1b4332;
   opacity: 0;
   visibility: hidden;
   transition: all 0.3s;
@@ -244,8 +244,8 @@ body {
   display: flex;
   gap: 12px;
   padding: 15px 20px;
-  background: #f8f9fa;
-  border-bottom: 1px solid #e9ecef;
+  background: #e8f5e9;
+  border-bottom: 1px solid #c8e6c9;
   justify-content: flex-start;
   flex-wrap: wrap;
   align-items: center;
@@ -266,7 +266,7 @@ body {
 .status-item span {
   font-size: 14px;
   font-weight: 500;
-  color: #2c3e50;
+  color: #1b4332;
 }
 
 .status-icon {
@@ -293,7 +293,7 @@ body {
 }
 
 .status-icon.total {
-  background: #3498db;
+  background: #4a7c59;
 }
 
 .recipe-section {
@@ -306,7 +306,7 @@ body {
   font-size: 20px;
   font-weight: bold;
   margin-bottom: 20px;
-  color: #2c3e50;
+  color: #1b4332;
 }
 
 .ingredient-card {
@@ -321,7 +321,7 @@ body {
 }
 
 .ingredient-card:hover {
-  border-color: #3498db;
+  border-color: #4a7c59;
   transform: translateY(-2px);
   box-shadow: 0 4px 15px rgba(0,0,0,0.2);
 }
@@ -347,7 +347,7 @@ body {
 .ingredient-icon {
   width: 30px;
   height: 30px;
-  background: #3498db;
+  background: #4a7c59;
   border-radius: 6px;
   display: flex;
   align-items: center;
@@ -357,7 +357,7 @@ body {
 
 .ingredient-name {
   font-weight: bold;
-  color: #2c3e50;
+  color: #1b4332;
   font-size: 16px;
 }
 
@@ -376,7 +376,7 @@ body {
 
 .weight-text {
   font-size: 14px;
-  color: #2c3e50;
+  color: #1b4332;
   font-weight: bold;
 }
 
@@ -391,7 +391,7 @@ body {
 
 .progress-fill {
   height: 100%;
-  background: #3498db;
+  background: #4a7c59;
   transition: width 0.3s;
 }
 
@@ -405,7 +405,7 @@ body {
 
 .right-panel {
   width: 60%;
-  background: #f8f9fa;
+  background: #f1f8f4;
   display: flex;
   flex-direction: column;
 }
@@ -421,7 +421,7 @@ body {
   margin-left: 80px;
   width: calc(100% - 80px);
   min-height: calc(100vh - 140px);
-  background: #f8f9fa;
+  background: #f1f8f4;
 }
 
 .recipe-panel {
@@ -451,7 +451,7 @@ body {
 .weighing-title {
   font-size: 24px;
   font-weight: bold;
-  color: #2c3e50;
+  color: #1b4332;
   margin-bottom: 30px;
   display: flex;
   align-items: center;
@@ -481,7 +481,7 @@ body {
 
 .info-label {
   font-weight: bold;
-  color: #2c3e50;
+  color: #1b4332;
 }
 
 .info-value {
@@ -500,7 +500,7 @@ body {
 .ingredient-name-large {
   font-size: 28px;
   font-weight: bold;
-  color: #2c3e50;
+  color: #1b4332;
   margin-bottom: 20px;
 }
 
@@ -510,9 +510,9 @@ body {
   align-items: center;
   margin-bottom: 30px;
   padding: 20px;
-  background: #f8f9fa;
+  background: #e8f5e9;
   border-radius: 10px;
-  border: 2px solid #e9ecef;
+  border: 2px solid #c8e6c9;
 }
 
 .digital-weight {
@@ -521,13 +521,13 @@ body {
   right: 30px;
   font-size: 54px;
   font-weight: 800;
-  color: #0ea5e9;
+  color: #4a7c59;
 }
 
 .current-weight {
   font-size: 36px;
   font-weight: bold;
-  color: #e74c3c;
+  color: #2d5016;
 }
 
 .target-weight {
@@ -550,8 +550,8 @@ body {
 }
 
 .info-badge {
-  background: #f8fafc;
-  border: 1px solid #e5e7eb;
+  background: #e8f5e9;
+  border: 1px solid #c8e6c9;
   border-radius: 10px;
   padding: 12px 14px;
 }
@@ -598,12 +598,12 @@ body {
   background: #f8f9fa;
   padding: 15px;
   border-radius: 8px;
-  border-left: 4px solid #3498db;
+  border-left: 4px solid #4a7c59;
 }
 
 .parameter-label {
   font-weight: bold;
-  color: #2c3e50;
+  color: #1b4332;
   margin-bottom: 5px;
 }
 
@@ -614,7 +614,7 @@ body {
 }
 
 .parameter-value.remaining {
-  color: #e74c3c;
+  color: #2d5016;
   font-weight: bold;
 }
 
@@ -638,12 +638,12 @@ body {
 }
 
 .action-btn.primary {
-  background: #3498db;
+  background: #4a7c59;
   color: white;
 }
 
 .action-btn.primary:hover {
-  background: #2980b9;
+  background: #2d5016;
   transform: translateY(-2px);
 }
 
@@ -658,7 +658,7 @@ body {
 }
 
 .footer {
-  background: #2c3e50;
+  background: #1b4332;
   color: white;
   padding: 15px 20px;
   display: flex;
@@ -706,7 +706,7 @@ body {
 .modal-title {
   font-size: 24px;
   font-weight: bold;
-  color: #2c3e50;
+  color: #1b4332;
   margin-bottom: 20px;
   text-align: center;
 }
@@ -722,7 +722,7 @@ body {
 .form-label {
   display: block;
   font-weight: bold;
-  color: #2c3e50;
+  color: #1b4332;
   margin-bottom: 8px;
 }
 
@@ -737,11 +737,11 @@ body {
 
 .form-input:focus {
   outline: none;
-  border-color: #3498db;
+  border-color: #4a7c59;
 }
 
 .form-input.readonly {
-  background: #f8f9fa;
+  background: #e8f5e9;
   color: #6c757d;
 }
 
@@ -779,12 +779,12 @@ body {
 }
 
 .btn-primary {
-  background: #3498db;
+  background: #4a7c59;
   color: white;
 }
 
 .btn-primary:hover {
-  background: #2980b9;
+  background: #2d5016;
 }
 
 .btn-secondary {
@@ -828,7 +828,7 @@ body {
   align-items: center;
   justify-content: center;
   min-height: 100vh;
-  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  background: linear-gradient(135deg, #4a7c59 0%, #2d5016 100%);
   padding: 20px;
 }
 
@@ -850,7 +850,7 @@ body {
   left: 0;
   right: 0;
   height: 5px;
-  background: linear-gradient(90deg, #3498db, #e74c3c, #f39c12, #27ae60);
+  background: linear-gradient(90deg, #4a7c59, #6b9f78, #8bc34a, #27ae60);
 }
 
 .login-header {
@@ -861,7 +861,7 @@ body {
 .logo-section h1 {
   font-size: 32px;
   font-weight: bold;
-  color: #2c3e50;
+  color: #1b4332;
   margin: 15px 0 5px 0;
 }
 
@@ -874,14 +874,23 @@ body {
 .logo-icon {
   width: 80px;
   height: 80px;
-  background: linear-gradient(135deg, #3498db, #2980b9);
+  background: white;
   border-radius: 50%;
   display: flex;
   align-items: center;
   justify-content: center;
   margin: 0 auto;
   color: white;
-  box-shadow: 0 10px 20px rgba(52, 152, 219, 0.3);
+  box-shadow: 0 10px 20px rgba(74, 124, 89, 0.3);
+  overflow: hidden;
+  padding: 8px;
+}
+
+.logo-icon img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  border-radius: 50%;
 }
 
 .login-form {
@@ -897,7 +906,7 @@ body {
   align-items: center;
   gap: 8px;
   font-weight: bold;
-  color: #2c3e50;
+  color: #1b4332;
   margin-bottom: 10px;
   font-size: 14px;
 }
@@ -914,9 +923,9 @@ body {
 
 .login-form .form-input:focus {
   outline: none;
-  border-color: #3498db;
+  border-color: #4a7c59;
   background: white;
-  box-shadow: 0 0 0 3px rgba(52, 152, 219, 0.1);
+  box-shadow: 0 0 0 3px rgba(74, 124, 89, 0.1);
 }
 
 .login-form .form-input:disabled {
@@ -943,7 +952,7 @@ body {
 }
 
 .password-toggle:hover {
-  color: #3498db;
+  color: #4a7c59;
 }
 
 .password-toggle:disabled {
@@ -965,7 +974,7 @@ body {
 .login-button {
   width: 100%;
   padding: 15px 20px;
-  background: linear-gradient(135deg, #3498db, #2980b9);
+  background: linear-gradient(135deg, #4a7c59, #2d5016);
   color: white;
   border: none;
   border-radius: 12px;
@@ -977,12 +986,12 @@ body {
   align-items: center;
   justify-content: center;
   gap: 10px;
-  box-shadow: 0 4px 15px rgba(52, 152, 219, 0.3);
+  box-shadow: 0 4px 15px rgba(74, 124, 89, 0.3);
 }
 
 .login-button:hover:not(:disabled) {
   transform: translateY(-2px);
-  box-shadow: 0 6px 20px rgba(52, 152, 219, 0.4);
+  box-shadow: 0 6px 20px rgba(74, 124, 89, 0.4);
 }
 
 .login-button:disabled {
@@ -1008,7 +1017,7 @@ body {
 }
 
 .demo-section h3 {
-  color: #2c3e50;
+  color: #1b4332;
   font-size: 16px;
   margin-bottom: 15px;
   text-align: center;
@@ -1033,8 +1042,8 @@ body {
 
 .demo-button:hover:not(:disabled) {
   background: #e9ecef;
-  border-color: #3498db;
-  color: #3498db;
+  border-color: #4a7c59;
+  color: #4a7c59;
 }
 
 .demo-button:disabled {
@@ -1098,7 +1107,7 @@ body {
 .page-title h1 {
   font-size: 28px;
   font-weight: bold;
-  color: #2c3e50;
+  color: #1b4332;
   margin: 0;
 }
 
@@ -1109,7 +1118,7 @@ body {
 
 /* Database Styles */
 .database-page, .settings-page, .history-page {
-  background: #f8f9fa;
+  background: #f1f8f4;
   min-height: 100vh;
   margin-left: 80px;
   overflow-y: auto;
@@ -1117,7 +1126,7 @@ body {
 
 /* Page Header Styles */
 .page-header {
-  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  background: linear-gradient(135deg, #4a7c59 0%, #2d5016 100%);
   color: white;
   padding: 30px;
   margin-bottom: 20px;
@@ -1180,7 +1189,7 @@ body {
 .sidebar-header h3 {
   font-size: 18px;
   font-weight: 600;
-  color: #2c3e50;
+  color: #1b4332;
   margin-bottom: 5px;
 }
 
@@ -1199,7 +1208,7 @@ body {
 .quick-stats h4 {
   font-size: 16px;
   font-weight: 600;
-  color: #2c3e50;
+  color: #1b4332;
   margin-bottom: 15px;
 }
 
@@ -1219,7 +1228,7 @@ body {
 .stat-value {
   font-size: 16px;
   font-weight: 600;
-  color: #2c3e50;
+  color: #1b4332;
 }
 
 /* Enhanced Database Tab Styles */
@@ -1235,9 +1244,9 @@ body {
 }
 
 .database-tab.active {
-  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  background: linear-gradient(135deg, #4a7c59 0%, #2d5016 100%);
   color: white;
-  box-shadow: 0 4px 15px rgba(102, 126, 234, 0.3);
+  box-shadow: 0 4px 15px rgba(74, 124, 89, 0.3);
   transform: translateX(5px);
 }
 
@@ -1276,9 +1285,9 @@ body {
 }
 
 .settings-tab.active {
-  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  background: linear-gradient(135deg, #4a7c59 0%, #2d5016 100%);
   color: white;
-  box-shadow: 0 4px 15px rgba(102, 126, 234, 0.3);
+  box-shadow: 0 4px 15px rgba(74, 124, 89, 0.3);
   transform: translateX(5px);
 }
 
@@ -1327,9 +1336,9 @@ body {
 }
 
 .history-tab.active {
-  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  background: linear-gradient(135deg, #4a7c59 0%, #2d5016 100%);
   color: white;
-  box-shadow: 0 4px 15px rgba(102, 126, 234, 0.3);
+  box-shadow: 0 4px 15px rgba(74, 124, 89, 0.3);
 }
 
 .database-container {
@@ -1361,20 +1370,20 @@ body {
 }
 
 .database-tab:hover {
-  background: #f8f9fa;
-  color: #2c3e50;
+  background: #e8f5e9;
+  color: #1b4332;
 }
 
 .database-tab.active {
-  background: #e3f2fd;
-  color: #2196f3;
-  border-left-color: #2196f3;
+  background: #e8f5e9;
+  color: #2d5016;
+  border-left-color: #4a7c59;
 }
 
 .database-content {
   flex: 1;
   padding: 30px;
-  background: #f8f9fa;
+  background: #f1f8f4;
 }
 
 .master-content {
@@ -1391,9 +1400,9 @@ body {
 }
 
 .content-header {
-  background: #f8f9fa;
+  background: #e8f5e9;
   padding: 20px 30px;
-  border-bottom: 1px solid #e9ecef;
+  border-bottom: 1px solid #c8e6c9;
   display: flex;
   justify-content: space-between;
   align-items: center;
@@ -1408,7 +1417,7 @@ body {
 .content-title h2 {
   font-size: 20px;
   font-weight: bold;
-  color: #2c3e50;
+  color: #1b4332;
   margin: 0;
 }
 
@@ -1429,9 +1438,9 @@ body {
 }
 
 .data-table th {
-  background: #f8f9fa;
+  background: #e8f5e9;
   font-weight: bold;
-  color: #2c3e50;
+  color: #1b4332;
   font-size: 14px;
 }
 
@@ -1442,12 +1451,12 @@ body {
 
 .sku-code, .tolerance-code, .user-username {
   font-weight: bold;
-  color: #3498db;
+  color: #4a7c59;
 }
 
 .product-name, .formulation-name, .tolerance-name, .user-name {
   font-weight: 500;
-  color: #2c3e50;
+  color: #1b4332;
 }
 
 .role-badge {
@@ -1522,7 +1531,7 @@ body {
 }
 
 .formulation-info {
-  background: #f8f9fa;
+  background: #e8f5e9;
   padding: 20px;
   border-radius: 8px;
   margin-bottom: 20px;
@@ -1547,13 +1556,13 @@ body {
 }
 
 .info-item span {
-  color: #2c3e50;
+  color: #1b4332;
   font-size: 16px;
 }
 
 .ingredients-section h3 {
   margin: 0 0 15px 0;
-  color: #2c3e50;
+  color: #1b4332;
   font-size: 18px;
 }
 
@@ -1580,12 +1589,12 @@ body {
 
 .ingredient-name {
   font-weight: 500;
-  color: #2c3e50;
+  color: #1b4332;
 }
 
 .ingredient-code {
   font-weight: bold;
-  color: #3498db;
+  color: #4a7c59;
 }
 
 .ingredient-category {
@@ -1600,7 +1609,7 @@ body {
 
 .ingredient-grouping {
   font-weight: bold;
-  color: #e74c3c;
+  color: #2d5016;
 }
 
 .ingredient-mass {
@@ -1625,7 +1634,7 @@ body {
   gap: 10px;
   font-size: 18px;
   font-weight: bold;
-  color: #2c3e50;
+  color: #1b4332;
 }
 
 .modal-close {
@@ -1666,8 +1675,8 @@ body {
 }
 
 .format-option:hover {
-  border-color: #3498db;
-  background: #f8f9fa;
+  border-color: #4a7c59;
+  background: #e8f5e9;
 }
 
 .format-option input[type="radio"] {
@@ -1675,13 +1684,13 @@ body {
 }
 
 .format-option input[type="radio"]:checked + svg {
-  color: #3498db;
+  color: #4a7c59;
 }
 
 .format-option:has(input:checked) {
-  border-color: #3498db;
-  background: #e3f2fd;
-  color: #3498db;
+  border-color: #4a7c59;
+  background: #e8f5e9;
+  color: #4a7c59;
 }
 
 .data-preview {
@@ -1690,7 +1699,7 @@ body {
 
 .data-preview h4 {
   margin: 0 0 15px 0;
-  color: #2c3e50;
+  color: #1b4332;
   font-size: 16px;
 }
 
@@ -1769,15 +1778,15 @@ body {
 }
 
 .import-instructions {
-  background: #f8f9fa;
+  background: #e8f5e9;
   padding: 15px;
   border-radius: 8px;
-  border-left: 4px solid #3498db;
+  border-left: 4px solid #4a7c59;
 }
 
 .import-instructions h4 {
   margin: 0 0 10px 0;
-  color: #2c3e50;
+  color: #1b4332;
   font-size: 14px;
 }
 
@@ -1873,8 +1882,8 @@ body {
 }
 
 .back-button:hover {
-  background: #e9ecef;
-  color: #2c3e50;
+  background: #e8f5e9;
+  color: #1b4332;
 }
 
 .page-title {
@@ -1886,7 +1895,7 @@ body {
 .page-title h1 {
   margin: 0;
   font-size: 24px;
-  color: #2c3e50;
+  color: #1b4332;
 }
 
 .edit-content {
@@ -1915,7 +1924,7 @@ body {
 .section-header h2 {
   margin: 0;
   font-size: 18px;
-  color: #2c3e50;
+  color: #1b4332;
 }
 
 .form-grid {
@@ -1932,7 +1941,7 @@ body {
 
 .form-label {
   font-weight: 500;
-  color: #495057;
+  color: #1b4332;
   margin-bottom: 8px;
   font-size: 14px;
 }
@@ -1947,8 +1956,8 @@ body {
 
 .form-input:focus {
   outline: none;
-  border-color: #3498db;
-  box-shadow: 0 0 0 3px rgba(52, 152, 219, 0.1);
+  border-color: #4a7c59;
+  box-shadow: 0 0 0 3px rgba(74, 124, 89, 0.1);
 }
 
 .form-input.error {
@@ -2016,12 +2025,12 @@ body {
 
 .ingredient-header h4 {
   margin: 0;
-  color: #2c3e50;
+  color: #1b4332;
   font-size: 16px;
 }
 
 .ingredient-code {
-  background: #3498db;
+  background: #4a7c59;
   color: white;
   padding: 4px 8px;
   border-radius: 4px;
@@ -2058,7 +2067,7 @@ body {
 
 .grouping-text {
   font-size: 12px;
-  color: #2c3e50;
+  color: #1b4332;
   font-weight: 500;
 }
 
@@ -2084,7 +2093,7 @@ body {
 
 .summary-title {
   margin: 0 0 12px 0;
-  color: #2c3e50;
+  color: #1b4332;
   font-size: 16px;
 }
 
@@ -2102,11 +2111,11 @@ body {
 }
 
 .summary-table thead th {
-  background: #f8f9fa;
-  color: #2c3e50;
+  background: #e8f5e9;
+  color: #1b4332;
   font-weight: 600;
   padding: 12px 14px;
-  border-bottom: 1px solid #e9ecef;
+  border-bottom: 1px solid #c8e6c9;
   text-align: left;
 }
 
@@ -2117,11 +2126,11 @@ body {
 }
 
 .summary-table tfoot td {
-  background: #f8f9fa;
+  background: #e8f5e9;
   padding: 12px 14px;
-  border-top: 1px solid #e9ecef;
+  border-top: 1px solid #c8e6c9;
   font-weight: 600;
-  color: #2c3e50;
+  color: #1b4332;
 }
 
 .align-right {
@@ -2174,7 +2183,7 @@ body {
 
 .add-ingredient-modal h3 {
   margin: 0 0 20px 0;
-  color: #2c3e50;
+  color: #1b4332;
   font-size: 18px;
 }
 
@@ -2274,7 +2283,7 @@ body {
 
 .search-input:focus {
   outline: none;
-  border-color: #3498db;
+  border-color: #4a7c59;
 }
 
 .filter-controls {
@@ -2297,7 +2306,7 @@ body {
   border: none;
   background: transparent;
   font-size: 14px;
-  color: #2c3e50;
+  color: #1b4332;
   cursor: pointer;
 }
 
@@ -2321,9 +2330,9 @@ body {
 }
 
 .sku-table th, .ingredients-table th {
-  background: #f8f9fa;
+  background: #e8f5e9;
   font-weight: bold;
-  color: #2c3e50;
+  color: #1b4332;
   font-size: 14px;
 }
 
@@ -2334,12 +2343,12 @@ body {
 
 .sku-code {
   font-weight: bold;
-  color: #3498db;
+  color: #4a7c59;
 }
 
 .sku-name {
   font-weight: 500;
-  color: #2c3e50;
+  color: #1b4332;
 }
 
 .status-badge {
@@ -2371,12 +2380,12 @@ body {
 }
 
 .action-btn.edit {
-  background: #3498db;
+  background: #4a7c59;
   color: white;
 }
 
 .action-btn.edit:hover {
-  background: #2980b9;
+  background: #2d5016;
 }
 
 .action-btn.delete {
@@ -2428,20 +2437,20 @@ body {
 }
 
 .tab-button:hover {
-  background: #f8f9fa;
-  color: #2c3e50;
+  background: #e8f5e9;
+  color: #1b4332;
 }
 
 .tab-button.active {
-  background: #e3f2fd;
-  color: #2196f3;
-  border-left-color: #2196f3;
+  background: #e8f5e9;
+  color: #2d5016;
+  border-left-color: #4a7c59;
 }
 
 .settings-content {
   flex: 1;
   padding: 30px;
-  background: #f8f9fa;
+  background: #f1f8f4;
 }
 
 .settings-section {
@@ -2455,10 +2464,10 @@ body {
 .settings-section h3 {
   font-size: 20px;
   font-weight: bold;
-  color: #2c3e50;
+  color: #1b4332;
   margin-bottom: 25px;
   padding-bottom: 10px;
-  border-bottom: 2px solid #e9ecef;
+  border-bottom: 2px solid #c8e6c9;
 }
 
 .settings-grid {
@@ -2485,7 +2494,7 @@ body {
   gap: 10px;
   cursor: pointer;
   font-size: 14px;
-  color: #2c3e50;
+  color: #1b4332;
 }
 
 .checkbox-label input[type="checkbox"] {
@@ -2502,8 +2511,8 @@ body {
 }
 
 .checkbox-label input[type="checkbox"]:checked + .checkmark {
-  background: #3498db;
-  border-color: #3498db;
+  background: #4a7c59;
+  border-color: #4a7c59;
 }
 
 .checkbox-label input[type="checkbox"]:checked + .checkmark::after {
@@ -2559,7 +2568,7 @@ body {
 .history-info .work-order {
   font-size: 18px;
   font-weight: bold;
-  color: #2c3e50;
+  color: #1b4332;
   margin-bottom: 5px;
 }
 
@@ -2594,7 +2603,7 @@ body {
 }
 
 .ingredients-summary {
-  background: #f8f9fa;
+  background: #e8f5e9;
   padding: 15px;
   border-radius: 8px;
   margin-bottom: 15px;
@@ -2602,7 +2611,7 @@ body {
 
 .ingredients-title {
   font-weight: bold;
-  color: #2c3e50;
+  color: #1b4332;
   margin-bottom: 10px;
 }
 
@@ -2636,12 +2645,12 @@ body {
 }
 
 .history-notes {
-  background: #e3f2fd;
+  background: #e8f5e9;
   padding: 10px 15px;
   border-radius: 6px;
   font-size: 14px;
-  color: #2c3e50;
-  border-left: 4px solid #2196f3;
+  color: #1b4332;
+  border-left: 4px solid #4a7c59;
 }
 
 .history-actions {
@@ -2658,16 +2667,16 @@ body {
 }
 
 .detail-section {
-  background: #f8f9fa;
+  background: #e8f5e9;
   padding: 20px;
   border-radius: 8px;
-  border-left: 4px solid #3498db;
+  border-left: 4px solid #4a7c59;
 }
 
 .detail-section h4 {
   font-size: 16px;
   font-weight: bold;
-  color: #2c3e50;
+  color: #1b4332;
   margin-bottom: 15px;
 }
 
@@ -2790,10 +2799,10 @@ body {
     border-bottom: 3px solid transparent;
   }
 
-  .database-tab.active {
-    border-left: none;
-    border-bottom-color: #2196f3;
-  }
+.database-tab.active {
+  border-left: none;
+  border-bottom-color: #4a7c59;
+}
 
   .database-content {
     padding: 20px 15px;
@@ -2818,7 +2827,7 @@ body {
   justify-content: center;
   gap: 10px;
   padding: 20px;
-  background: #f8f9fa;
+  background: #e8f5e9;
   border-radius: 8px;
   margin: 20px 0;
   color: #666;
@@ -2864,7 +2873,7 @@ body {
 
 .header-title h1 {
   font-size: 28px;
-  color: #2c3e50;
+  color: #1b4332;
   margin-bottom: 5px;
 }
 
@@ -2892,10 +2901,10 @@ body {
 .formulation-details-card h2,
 .ingredients-card h2 {
   font-size: 20px;
-  color: #2c3e50;
+  color: #1b4332;
   margin-bottom: 20px;
   padding-bottom: 10px;
-  border-bottom: 2px solid #f0f0f0;
+  border-bottom: 2px solid #c8e6c9;
 }
 
 .form-grid {
@@ -2913,7 +2922,7 @@ body {
 
 .form-label {
   font-weight: 600;
-  color: #2c3e50;
+  color: #1b4332;
   font-size: 14px;
 }
 
@@ -2927,7 +2936,7 @@ body {
 
 .form-input:focus {
   outline: none;
-  border-color: #3498db;
+  border-color: #4a7c59;
 }
 
 .form-actions {
@@ -2935,7 +2944,7 @@ body {
   gap: 15px;
   justify-content: flex-end;
   padding-top: 20px;
-  border-top: 1px solid #f0f0f0;
+  border-top: 1px solid #c8e6c9;
 }
 
 .ingredients-header {
@@ -2958,12 +2967,12 @@ body {
 }
 
 .ingredients-table th {
-  background: #f8f9fa;
+  background: #e8f5e9;
   padding: 15px 12px;
   text-align: left;
   font-weight: 600;
-  color: #2c3e50;
-  border-bottom: 2px solid #e0e0e0;
+  color: #1b4332;
+  border-bottom: 2px solid #c8e6c9;
   font-size: 14px;
 }
 
@@ -2974,7 +2983,7 @@ body {
 }
 
 .ingredients-table tr:hover {
-  background: #f8f9fa;
+  background: #e8f5e9;
 }
 
 .ingredient-actions {
@@ -3013,7 +3022,7 @@ body {
 
 .empty-state h3 {
   font-size: 18px;
-  color: #2c3e50;
+  color: #1b4332;
   margin-bottom: 8px;
 }
 

@@ -316,7 +316,7 @@ const Settings = () => {
   const [activeTab, setActiveTab] = useState('general')
   const [settings, setSettings] = useState({
     // General Settings
-    companyName: 'Foom Lab Global',
+    companyName: 'Kebanggaan Masyarakat Indonesia',
     appVersion: 'v1.0.0',
     language: 'id',
     timezone: 'Asia/Jakarta',

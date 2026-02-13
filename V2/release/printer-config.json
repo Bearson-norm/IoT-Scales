@@ -9,8 +9,8 @@
   "autoDetect": true,
   "fallbackPrinters": [
     {
-      "name": "Xprinter XP-420B (Copy 1)",
-      "port": "USB007",
+      "name": "Xprinter XP-420B (Copy 2)",
+      "port": "USB008",
       "driver": "Xprinter XP-420B"
     },
     {

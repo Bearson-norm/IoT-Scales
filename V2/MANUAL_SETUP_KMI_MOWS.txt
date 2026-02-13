@@ -1,0 +1,166 @@
+================================================================
+MANUAL SETUP DATABASE KMI_MOWS - COPY PASTE COMMANDS
+================================================================
+
+Database: KMI_MOWS
+Superuser: postgres
+User: admin
+Password: admin123
+
+================================================================
+STEP 1: Masuk ke folder V2
+================================================================
+cd C:\Users\info\Documents\Project\not-released\IoT-Project\Released-Github\IoT-Scales\V2
+
+
+================================================================
+STEP 2: Set PostgreSQL Password (jika password bukan Admin123)
+================================================================
+set PGPASSWORD=Admin123
+
+REM Atau jika password berbeda:
+REM set PGPASSWORD=your_postgres_password
+
+
+================================================================
+STEP 3: Test Koneksi PostgreSQL
+================================================================
+psql -U postgres -c "SELECT version();"
+
+
+================================================================
+STEP 4: Buat Database KMI_MOWS
+================================================================
+psql -U postgres -c "DROP DATABASE IF EXISTS \"KMI_MOWS\";"
+psql -U postgres -c "CREATE DATABASE \"KMI_MOWS\";"
+
+
+================================================================
+STEP 5: Buat User Admin
+================================================================
+psql -U postgres -c "DROP USER IF EXISTS admin;"
+psql -U postgres -c "CREATE USER admin WITH PASSWORD 'admin123';"
+
+
+================================================================
+STEP 6: Berikan Privileges ke User Admin
+================================================================
+psql -U postgres -d "KMI_MOWS" -c "GRANT ALL PRIVILEGES ON DATABASE \"KMI_MOWS\" TO admin;"
+psql -U postgres -d "KMI_MOWS" -c "GRANT ALL ON SCHEMA public TO admin;"
+psql -U postgres -d "KMI_MOWS" -c "ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON TABLES TO admin;"
+psql -U postgres -d "KMI_MOWS" -c "ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON SEQUENCES TO admin;"
+
+
+================================================================
+STEP 7: Import Schema (PENTING: Ganti FLB_MOWS dengan KMI_MOWS)
+================================================================
+REM Opsi 1: Gunakan PowerShell untuk replace otomatis
+powershell -Command "(Get-Content database\schema.sql) -replace 'FLB_MOWS', 'KMI_MOWS' | Set-Content database\schema_kmi_mows.sql"
+psql -U postgres -d "KMI_MOWS" -f database\schema_kmi_mows.sql
+
+REM Opsi 2: Jika file sudah di-replace manual
+REM psql -U postgres -d "KMI_MOWS" -f database\schema.sql
+
+REM Jika error, coba path alternatif:
+REM psql -U postgres -d "KMI_MOWS" -f ..\database\schema.sql
+
+
+================================================================
+STEP 8: Import Core Schema
+================================================================
+psql -U postgres -d "KMI_MOWS" -f database\init\01-core-schema.sql
+
+REM Jika error, coba:
+REM psql -U postgres -d "KMI_MOWS" -f ..\database\init\01-core-schema.sql
+
+
+================================================================
+STEP 9: Import Weighing Tables
+================================================================
+psql -U postgres -d "KMI_MOWS" -f database\init\02-weighing.sql
+
+REM Jika error, coba:
+REM psql -U postgres -d "KMI_MOWS" -f ..\database\init\02-weighing.sql
+
+
+================================================================
+STEP 10: Berikan Privileges pada Semua Tables
+================================================================
+psql -U postgres -d "KMI_MOWS" -c "GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA public TO admin;"
+psql -U postgres -d "KMI_MOWS" -c "GRANT ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA public TO admin;"
+psql -U postgres -d "KMI_MOWS" -c "GRANT ALL PRIVILEGES ON ALL FUNCTIONS IN SCHEMA public TO admin;"
+
+
+================================================================
+STEP 11: Run Migrations (Optional, Skip jika file tidak ada)
+================================================================
+psql -U postgres -d "KMI_MOWS" -f database\migration-add-reject-status.sql
+psql -U postgres -d "KMI_MOWS" -f database\migration-add-opened-at.sql
+psql -U postgres -d "KMI_MOWS" -f database\migration-add-print-history.sql
+psql -U postgres -d "KMI_MOWS" -f database\migration-add-qc-role-and-reactivate-note.sql
+psql -U postgres -d "KMI_MOWS" -f database\migration-add-sequence-order.sql
+
+
+================================================================
+STEP 12: Verifikasi Setup
+================================================================
+REM Test koneksi dengan user admin
+set PGPASSWORD=admin123
+psql -U admin -d "KMI_MOWS" -c "SELECT current_user, current_database();"
+
+REM Cek jumlah tables
+set PGPASSWORD=Admin123
+psql -U postgres -d "KMI_MOWS" -c "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = 'public';"
+
+REM List semua tables
+psql -U postgres -d "KMI_MOWS" -c "\dt"
+
+
+================================================================
+ALTERNATIF: Gunakan SQL Script Langsung
+================================================================
+REM Jalankan file setup_kmi_mows.sql
+psql -U postgres -f setup_kmi_mows.sql
+
+REM Kemudian lanjutkan dengan import schema (Step 7-11)
+
+
+================================================================
+CONNECTION STRING
+================================================================
+Superuser:
+  Host: localhost
+  Port: 5432
+  Database: KMI_MOWS
+  Username: postgres
+  Password: Admin123 (atau password PostgreSQL Anda)
+
+User Admin:
+  Host: localhost
+  Port: 5432
+  Database: KMI_MOWS
+  Username: admin
+  Password: admin123
+
+
+================================================================
+TROUBLESHOOTING
+================================================================
+1. Error "password authentication failed"
+   -> Set PGPASSWORD dengan password PostgreSQL yang benar
+
+2. Error "database already exists"
+   -> Database sudah ada, bisa skip atau drop dulu
+
+3. Error "user already exists"
+   -> User sudah ada, bisa skip atau update password:
+      psql -U postgres -c "ALTER USER admin WITH PASSWORD 'admin123';"
+
+4. Error "permission denied"
+   -> Pastikan menjalankan sebagai superuser postgres
+   -> Pastikan privileges sudah diberikan
+
+5. File tidak ditemukan
+   -> Pastikan berada di folder V2
+   -> Cek apakah folder database ada
+   -> Gunakan path lengkap jika perlu
