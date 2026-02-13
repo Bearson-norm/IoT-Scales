@@ -4310,7 +4310,7 @@ function generateZPLReceipt(data) {
   };
   
   // === HEADER ===
-  addText(headerFontDots, 'LABEL PENIMBANGAN', { spacing: lineSpacing });
+  addText(headerFontDots, 'LABEL PENIMBANGAN KMI', { spacing: lineSpacing });
 
   if (moNumber) {
     addText(labelFontDots, `MO: ${escapeZPL(moNumber)}`, { spacing: sectionSpacing });
