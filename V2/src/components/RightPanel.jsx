@@ -66,6 +66,12 @@ const RightPanel = ({ workOrder, selectedIngredient, currentPage, currentWeight,
   
   // Calculate values needed for progressBarMax (with safe defaults)
   const remaining = workOrder && selectedIngredient ? Math.max(0, targetWeight - savedWeight) : 0
+  // Calculate target-weight display value as stream: targetWeight - currentWeight - savedWeight
+  const targetWeightDisplay = useMemo(() => {
+    if (!workOrder || !selectedIngredient) return 0
+    const currentWeightValue = isWeighingActive ? currentReading : 0
+    return Math.max(0, targetWeight - currentWeightValue - savedWeight)
+  }, [workOrder, selectedIngredient, targetWeight, currentReading, savedWeight, isWeighingActive])
   const tolerance = 3
   const minWeight = workOrder && selectedIngredient ? Math.max(0, targetWeight - tolerance) : 0
   const maxWeight = workOrder && selectedIngredient ? targetWeight + tolerance : 0
@@ -145,40 +151,31 @@ const RightPanel = ({ workOrder, selectedIngredient, currentPage, currentWeight,
   }
 
   if (!selectedIngredient) {
+    const noIngredientScaleDisplay = (typeof scaleDisplayWeight === 'number' && !isNaN(scaleDisplayWeight))
+      ? Math.round(Math.abs(scaleDisplayWeight) * 10) / 10
+      : 0.0
+
     return (
       <div className="right-panel">
-        <div className="weighing-section" style={{ position: 'relative', padding: '15px' }}>
-          <div className="weighing-title" style={{ marginBottom: '10px' }}>
-            <Scale size={24} />
+        <div className="weighing-section">
+          <div className="weighing-title">
+            <Scale size={20} />
             Scale
           </div>
           
-          {/* CRITICAL FIX: Always show digital-weight even when no ingredient selected
-              This prevents freeze when switching ingredients or during modal transitions */}
-          <div className="digital-weight" style={{ top: '1px', right: '15px', fontSize: '42px' }}>
-            {(() => {
-              // CRITICAL: Safe handling of scaleDisplayWeight to prevent errors
-              const displayValue = (typeof scaleDisplayWeight === 'number' && !isNaN(scaleDisplayWeight))
-                ? Math.round(Math.abs(scaleDisplayWeight) * 10) / 10
-                : 0.0
-              return displayValue.toFixed(1)
-            })()} g
-            {/* WebSocket active indicator - shows data is being received */}
+          <div className="digital-weight">
+            {noIngredientScaleDisplay.toFixed(1)} g
             <div style={{ 
-              position: 'absolute', 
-              top: '-8px', 
-              right: '-8px', 
-              width: '12px', 
-              height: '12px', 
+              position: 'absolute', top: '-6px', right: '-6px',
+              width: '10px', height: '10px',
               backgroundColor: scaleConnected ? '#22c55e' : '#ef4444',
-              borderRadius: '50%',
-              border: '2px solid white',
-              boxShadow: '0 0 8px rgba(0,0,0,0.3)',
+              borderRadius: '50%', border: '2px solid white',
+              boxShadow: '0 0 6px rgba(0,0,0,0.2)',
               animation: scaleConnected ? 'pulse 2s infinite' : 'none'
-            }} title={scaleConnected ? 'WebSocket aktif - Data real-time' : 'WebSocket tidak terhubung'} />
+            }} title={scaleConnected ? 'WebSocket aktif' : 'WebSocket tidak terhubung'} />
           </div>
           
-          <div className="work-order-info" style={{ marginTop: '60px' }}>
+          <div className="work-order-info" style={{ marginTop: '48px' }}>
             <div className="info-row">
               <span className="info-label">Work Order:</span>
               <span className="info-value">{workOrder.workOrder}</span>
@@ -194,7 +191,7 @@ const RightPanel = ({ workOrder, selectedIngredient, currentPage, currentWeight,
           </div>
 
           <div className="empty-state">
-            <Scale size={64} className="empty-icon" />
+            <Scale size={48} className="empty-icon" />
             <div className="empty-text">Pilih Bahan Mentah</div>
             <div className="empty-subtext">Klik salah satu bahan di panel kiri untuk memulai penimbangan</div>
           </div>
@@ -293,206 +290,119 @@ const RightPanel = ({ workOrder, selectedIngredient, currentPage, currentWeight,
   const currentReadingOver = currentReading > remainingMax;
   const currentReadingUnder = currentReading < remainingMin;
 
+  // Safe display value helper
+  const safeScaleDisplay = (typeof scaleDisplayWeight === 'number' && !isNaN(scaleDisplayWeight))
+    ? Math.round(Math.abs(scaleDisplayWeight) * 10) / 10
+    : 0.0
+
   return (
     <div className="right-panel">
-      <div className="weighing-section" style={{ position: 'relative', padding: '15px' }}>
-        <div className="weighing-title" style={{ marginBottom: '10px' }}>
-          <Scale size={24} />
+      <div className="weighing-section">
+        <div className="weighing-title">
+          <Scale size={20} />
           Scale
         </div>
-        {/* Show current reading from scale (not total accumulated) */}
-        {/* CRITICAL: Always use scaleDisplayWeight for display - this is real-time value from scale
-            zeroCheckWeight is only for button validation, not for display
-            scaleDisplayWeight is always updated from WebSocket, regardless of weighing mode
-            CRITICAL: Handle undefined/null/NaN safely to prevent display errors */}
-        <div className="digital-weight" style={{ top: '1px', right: '15px', fontSize: '42px' }}>
-          {(() => {
-            // CRITICAL: Safe handling of scaleDisplayWeight to prevent errors
-            // Check if value is valid number, otherwise use 0
-            const displayValue = (typeof scaleDisplayWeight === 'number' && !isNaN(scaleDisplayWeight))
-              ? Math.round(Math.abs(scaleDisplayWeight) * 10) / 10
-              : 0.0
-            return displayValue.toFixed(1)
-          })()} g
-          {/* WebSocket active indicator - shows data is being received */}
+
+        {/* Digital weight display - absolute positioned top-right */}
+        <div className="digital-weight">
+          {safeScaleDisplay.toFixed(1)} g
           <div style={{ 
-            position: 'absolute', 
-            top: '-8px', 
-            right: '-8px', 
-            width: '12px', 
-            height: '12px', 
+            position: 'absolute', top: '-6px', right: '-6px',
+            width: '10px', height: '10px',
             backgroundColor: scaleConnected ? '#22c55e' : '#ef4444',
-            borderRadius: '50%',
-            border: '2px solid white',
-            boxShadow: '0 0 8px rgba(0,0,0,0.3)',
+            borderRadius: '50%', border: '2px solid white',
+            boxShadow: '0 0 6px rgba(0,0,0,0.2)',
             animation: scaleConnected ? 'pulse 2s infinite' : 'none'
-          }} title={scaleConnected ? 'WebSocket aktif - Data real-time' : 'WebSocket tidak terhubung'} />
+          }} title={scaleConnected ? 'WebSocket aktif' : 'WebSocket tidak terhubung'} />
         </div>
         
-        <div className="info-badges" style={{ marginBottom: '8px', gap: '8px' }}>
-          <div className="info-badge" style={{ padding: '8px 10px' }}><div className="label" style={{ fontSize: '11px' }}>Work Order</div><div className="value" style={{ fontSize: '14px' }}>{workOrder.workOrder}</div></div>
-          <div className="info-badge" style={{ padding: '8px 10px' }}><div className="label" style={{ fontSize: '11px' }}>Formula Name</div><div className="value" style={{ fontSize: '14px' }}>{workOrder.formulaName}</div></div>
-          <div className="info-badge" style={{ padding: '8px 10px' }}><div className="label" style={{ fontSize: '11px' }}>Order Qty</div><div className="value" style={{ fontSize: '14px' }}>{(workOrder.orderQty || 0).toFixed(1)}</div></div>
+        {/* Work order info badges */}
+        <div className="info-badges">
+          <div className="info-badge">
+            <div className="label">Work Order</div>
+            <div className="value">{workOrder.workOrder}</div>
+          </div>
+          <div className="info-badge">
+            <div className="label">Formula Name</div>
+            <div className="value">{workOrder.formulaName}</div>
+          </div>
+          <div className="info-badge">
+            <div className="label">Order Qty</div>
+            <div className="value">{(workOrder.orderQty || 0).toFixed(1)}</div>
+          </div>
         </div>
 
-        <div className="ingredient-details" style={{ padding: '15px' }}>
-          <div className="ingredient-name-large" style={{ marginBottom: '6px', fontSize: '22px' }}>
+        {/* Ingredient details card */}
+        <div className="ingredient-details">
+          <div className="ingredient-name-large">
             {selectedIngredient.name}
           </div>
           
-          {/* Progress bar indicator below ingredient name with tolerance markers - WIDE GAP VISUALIZATION */}
-          <div className="progress-bar-container" style={{ 
-            marginTop: '6px', 
-            marginBottom: '8px',
-            width: '100%',
-            height: '16px', // Taller for better visibility
-            backgroundColor: '#e5e7eb',
-            borderRadius: '8px',
-            overflow: 'visible',
-            position: 'relative',
-            boxShadow: 'inset 0 1px 3px rgba(0, 0, 0, 0.1)', // Add depth
-            border: '1px solid #d1d5db' // Add border for better definition
+          {/* Progress bar with tolerance markers */}
+          <div style={{ 
+            width: '100%', height: '14px',
+            backgroundColor: '#e5e7eb', borderRadius: '7px',
+            overflow: 'visible', position: 'relative',
+            boxShadow: 'inset 0 1px 2px rgba(0,0,0,0.08)',
+            border: '1px solid #d1d5db'
           }}>
-            {/* Progress fill - shows current reading relative to remaining weight */}
-            <div 
-              className="progress-bar-fill"
-              style={{
-                width: `${currentPercent}%`,
-                height: '100%',
-                backgroundColor: currentReadingWithinTolerance ? '#22c55e' : (currentReadingUnder ? '#eab308' : '#ef4444'),
-                transition: 'width 0.3s ease, background-color 0.3s ease',
-                borderRadius: '6px',
-                position: 'relative',
-                zIndex: 1
-              }}
-            />
+            <div style={{
+              width: `${currentPercent}%`, height: '100%',
+              backgroundColor: currentReadingWithinTolerance ? '#22c55e' : (currentReadingUnder ? '#eab308' : '#ef4444'),
+              transition: 'width 0.3s ease, background-color 0.3s ease',
+              borderRadius: '6px', position: 'relative', zIndex: 1
+            }} />
             
-            {/* Min tolerance marker (blue line on the left) - shows min remaining to add */}
             {remainingMinPercent > 0 && (
-              <div
-                className="tolerance-marker-line min"
-                style={{
-                  position: 'absolute',
-                  left: `${remainingMinPercent}%`,
-                  top: '-3px',
-                  width: '3px',
-                  height: '20px',
-                  backgroundColor: '#3b82f6',
-                  zIndex: 2,
-                  boxShadow: '0 0 4px rgba(59, 130, 246, 0.7), 0 0 2px rgba(59, 130, 246, 0.5)',
-                  transform: 'translateX(-50%)',
-                  borderRadius: '1px'
-                }}
-                title={`Min Remaining: ${remainingMin.toFixed(1)}g (Total: ${(savedWeight + remainingMin).toFixed(1)}g)`}
-              />
+              <div style={{
+                position: 'absolute', left: `${remainingMinPercent}%`, top: '-2px',
+                width: '2px', height: '18px', backgroundColor: '#3b82f6', zIndex: 2,
+                boxShadow: '0 0 3px rgba(59,130,246,0.6)', transform: 'translateX(-50%)'
+              }} title={`Min: ${remainingMin.toFixed(1)}g`} />
             )}
             
-            {/* Target remaining marker (purple line at target position) */}
             {remainingTargetPercent > 0 && (
-              <div
-                className="tolerance-marker-line target"
-                style={{
-                  position: 'absolute',
-                  left: `${remainingTargetPercent}%`,
-                  top: '-3px',
-                  width: '3px',
-                  height: '20px',
-                  backgroundColor: '#6366f1',
-                  zIndex: 3,
-                  boxShadow: '0 0 5px rgba(99, 102, 241, 0.8), 0 0 3px rgba(99, 102, 241, 0.6)',
-                  transform: 'translateX(-50%)',
-                  borderRadius: '1px'
-                }}
-                title={`Target Remaining: ${remainingTarget.toFixed(1)}g (Total: ${targetWeight.toFixed(1)}g)`}
-              />
+              <div style={{
+                position: 'absolute', left: `${remainingTargetPercent}%`, top: '-2px',
+                width: '2px', height: '18px', backgroundColor: '#6366f1', zIndex: 3,
+                boxShadow: '0 0 4px rgba(99,102,241,0.7)', transform: 'translateX(-50%)'
+              }} title={`Target: ${remainingTarget.toFixed(1)}g`} />
             )}
             
-            {/* Max tolerance marker (blue line on the right) - shows max remaining to add */}
             {remainingMaxPercent > 0 && (
-              <div
-                className="tolerance-marker-line max"
-                style={{
-                  position: 'absolute',
-                  left: `${remainingMaxPercent}%`,
-                  top: '-3px',
-                  width: '3px',
-                  height: '20px',
-                  backgroundColor: '#3b82f6',
-                  zIndex: 2,
-                  boxShadow: '0 0 4px rgba(59, 130, 246, 0.7), 0 0 2px rgba(59, 130, 246, 0.5)',
-                  transform: 'translateX(-50%)',
-                  borderRadius: '1px'
-                }}
-                title={`Max Remaining: ${remainingMax.toFixed(1)}g (Total: ${(savedWeight + remainingMax).toFixed(1)}g)`}
-              />
+              <div style={{
+                position: 'absolute', left: `${remainingMaxPercent}%`, top: '-2px',
+                width: '2px', height: '18px', backgroundColor: '#3b82f6', zIndex: 2,
+                boxShadow: '0 0 3px rgba(59,130,246,0.6)', transform: 'translateX(-50%)'
+              }} title={`Max: ${remainingMax.toFixed(1)}g`} />
             )}
             
-            {/* Current reading indicator (vertical line showing current reading position) */}
             {currentReading > 0 && (
-              <div
-                className="current-weight-marker"
-                style={{
-                  position: 'absolute',
-                  left: `${currentPercent}%`,
-                  top: '-5px',
-                  width: '4px',
-                  height: '24px',
-                  backgroundColor: '#1f2937',
-                  zIndex: 4,
-                  boxShadow: '0 0 6px rgba(0, 0, 0, 0.7), 0 0 3px rgba(0, 0, 0, 0.5)',
-                  transform: 'translateX(-50%)',
-                  borderRadius: '2px',
-                  border: '1px solid rgba(255, 255, 255, 0.3)'
-                }}
-                title={`Current Reading: ${currentReading.toFixed(1)}g / Remaining: ${remaining.toFixed(1)}g (${((currentReading / remaining) * 100).toFixed(1)}%) | Total: ${totalAccumulated.toFixed(1)}g`}
-              />
+              <div style={{
+                position: 'absolute', left: `${currentPercent}%`, top: '-4px',
+                width: '3px', height: '22px', backgroundColor: '#1f2937', zIndex: 4,
+                boxShadow: '0 0 4px rgba(0,0,0,0.5)', transform: 'translateX(-50%)',
+                borderRadius: '1px'
+              }} title={`Reading: ${currentReading.toFixed(1)}g / ${remaining.toFixed(1)}g`} />
             )}
           </div>
           
-          {/* Tolerance range labels - shows remaining to add context */}
-          <div style={{ 
-            display: 'flex', 
-            justifyContent: 'space-between', 
-            fontSize: '11px',
-            color: '#6b7280',
-            marginTop: '4px',
-            marginBottom: '2px',
-            fontWeight: '500'
-          }}>
+          {/* Tolerance labels */}
+          <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '10px', color: '#6b7280', fontWeight: 500 }}>
             <span style={{ color: '#3b82f6' }}>
               Min: {remainingMin.toFixed(1)}g
-              <span style={{ fontSize: '9px', color: '#9ca3af', marginLeft: '2px' }}>
-                (Total: {(savedWeight + remainingMin).toFixed(1)}g)
-              </span>
             </span>
-            <span style={{ fontWeight: 'bold', color: '#6366f1', fontSize: '13px' }}>
+            <span style={{ fontWeight: 700, color: '#6366f1', fontSize: '11px' }}>
               Target: {remaining.toFixed(1)}g
-              <span style={{ fontSize: '9px', fontWeight: 'normal', color: '#9ca3af', marginLeft: '4px' }}>
-                (Total: {targetWeight.toFixed(1)}g)
-              </span>
             </span>
             <span style={{ color: '#3b82f6' }}>
               Max: {remainingMax.toFixed(1)}g
-              <span style={{ fontSize: '9px', color: '#9ca3af', marginLeft: '2px' }}>
-                (Total: {(savedWeight + remainingMax).toFixed(1)}g)
-              </span>
             </span>
           </div>
           
-          
-          {/* Weight Display Section - Separate row */}
-          <div className="weight-display" style={{ marginTop: '4px', marginBottom: '2px', padding: '8px 12px', display: 'block', width: '100%' }}>
-            <div className="current-weight" style={{ fontSize: '26px' }}>
-              {/* CRITICAL: Display logic:
-                  - Jika weighing aktif: tampilkan currentReading (accumulated weight)
-                  - Jika TIDAK weighing (belum Start): tampilkan scaleDisplayWeight (real-time dari timbangan)
-                  - Hanya tampilkan savedWeight jika ingredient tidak ada atau null
-                  
-                  REASONING: Ketika ingredient sudah dipilih tapi belum Start:
-                  - User ingin lihat berat real-time dari timbangan (untuk zero check)
-                  - savedWeight hanya relevan untuk tracking, bukan untuk display saat persiapan weighing
-                  - Setelah klik Start, baru tampilkan currentReading (yang terakumulasi)
-              */}
+          {/* Weight display */}
+          <div className="weight-display">
+            <div className="current-weight">
               {isWeighingActive 
                 ? currentReading.toFixed(1)
                 : selectedIngredient 
@@ -500,118 +410,77 @@ const RightPanel = ({ workOrder, selectedIngredient, currentPage, currentWeight,
                   : savedWeight.toFixed(1)
               } g
             </div>
-            <div className="target-weight" style={{ fontSize: '16px' }}>
-              {/* Display: remaining weight (how much more to add) */}
-              / {remaining.toFixed(1)} g
+            <div className="target-weight">
+              / {targetWeightDisplay.toFixed(1)} g
             </div>
             {(selectedIngredient.progressPercentage || 0) > 0 && (
-              <div style={{ fontSize: '10px', color: '#9ca3af', marginTop: '2px' }}>
+              <div style={{ fontSize: '10px', color: '#9ca3af', width: '100%' }}>
                 Progress: {(selectedIngredient.progressPercentage || 0).toFixed(1)}% | Total: {totalAccumulated.toFixed(1)}g / Target: {targetWeight.toFixed(1)}g
               </div>
             )}
           </div>
 
-          {/* Parameter Weight Section - Separate section with its own container */}
-          <div style={{ 
-            marginTop: '20px', 
-            marginBottom: '10px',
-            padding: '10px',
-            backgroundColor: '#f8f9fa',
-            borderRadius: '8px',
-            border: '1px solid #e5e7eb',
-            display: 'block',
-            width: '100%'
-          }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '6px 0', borderBottom: '1px solid #e5e7eb' }}>
-              <div className="parameter-label" style={{ fontSize: '14px', fontWeight: '500' }}>MAX</div>
-              <div className="parameter-value" style={{ fontSize: '14px', fontWeight: '600' }}>
-                {maxWeight.toFixed(1)} g
-              </div>
+          {/* Parameter table */}
+          <div className="param-table">
+            <div className="param-row">
+              <span className="parameter-label">MAX</span>
+              <span className="parameter-value">{maxWeight.toFixed(1)} g</span>
             </div>
-            
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '6px 0', borderBottom: '1px solid #e5e7eb' }}>
-              <div className="parameter-label" style={{ fontSize: '14px', fontWeight: '500' }}>Plan Qty</div>
-              <div className="parameter-value" style={{ fontSize: '14px', fontWeight: '600' }}>
-                {targetWeight.toFixed(1)} g
-              </div>
+            <div className="param-row">
+              <span className="parameter-label">Plan Qty</span>
+              <span className="parameter-value">{targetWeight.toFixed(1)} g</span>
             </div>
-            
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '6px 0', borderBottom: '1px solid #e5e7eb' }}>
-              <div className="parameter-label" style={{ fontSize: '14px', fontWeight: '500' }}>MIN</div>
-              <div className="parameter-value" style={{ fontSize: '14px', fontWeight: '600' }}>
-                {minWeight.toFixed(1)} g
-              </div>
+            <div className="param-row">
+              <span className="parameter-label">MIN</span>
+              <span className="parameter-value">{minWeight.toFixed(1)} g</span>
             </div>
-            
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '6px 0' }}>
-              <div className="parameter-label" style={{ fontSize: '14px', fontWeight: '500' }}>Remaining</div>
-              <div className="parameter-value remaining" style={{ fontSize: '14px', fontWeight: '600' }}>
-                {remaining.toFixed(1)} g
-              </div>
+            <div className="param-row" style={{ borderBottom: 'none' }}>
+              <span className="parameter-label">Remaining</span>
+              <span className="parameter-value remaining">{remaining.toFixed(1)} g</span>
             </div>
           </div>
 
-          {/* Instruction - Separate row */}
-          <div style={{ 
-            marginTop: '10px',
-            padding: '10px',
-            backgroundColor: '#f8f9fa',
-            borderRadius: '8px',
-            border: '1px solid #e5e7eb'
-          }}>
-            <div className="parameter-label" style={{ fontSize: '14px', marginBottom: '4px' }}>Instruction</div>
-            <div className="parameter-value" style={{ fontSize: '14px' }}>
+          {/* Instruction */}
+          <div className="param-card">
+            <div className="parameter-label">Instruction</div>
+            <div className="parameter-value">
               {selectedIngredient.instruction || 'Tidak ada instruksi khusus'}
             </div>
           </div>
 
-          {/* Exp Date - Separate row */}
-          <div style={{ 
-            marginTop: '10px',
-            padding: '10px',
-            backgroundColor: '#f8f9fa',
-            borderRadius: '8px',
-            border: '1px solid #e5e7eb'
-          }}>
-            <div className="parameter-label" style={{ fontSize: '14px', marginBottom: '4px' }}>Exp Date</div>
-            <div className="parameter-value" style={{ fontSize: '14px' }}>
+          {/* Exp Date */}
+          <div className="param-card">
+            <div className="parameter-label">Exp Date</div>
+            <div className="parameter-value">
               {selectedIngredient.expDate || '30/08/2027'}
             </div>
           </div>
 
-          <div className="action-buttons" style={{ marginTop: '10px', gap: '8px' }}>
-            {/* If verified (not showing verification modal) and not weighing yet, show Start button, otherwise show Save button */}
+          {/* Action buttons */}
+          <div className="action-buttons">
             {!isWeighingActive && !showProductVerification ? (
               <button 
                 className="action-btn primary" 
-              onClick={async (e) => {
-                e.preventDefault()
-                e.stopPropagation()
-                
-                // REMOVED: Zero check - user requested to remove zero check
-                // Proceed directly with starting weighing
-                if (onStartWeighing) {
-                  await onStartWeighing()
+                onClick={async (e) => {
+                  e.preventDefault()
+                  e.stopPropagation()
+                  if (onStartWeighing) {
+                    await onStartWeighing()
+                  }
+                }}
+                disabled={isButtonDisabled}
+                style={{
+                  opacity: !isButtonDisabled ? 1 : 0.5,
+                  cursor: !isButtonDisabled ? 'pointer' : 'not-allowed',
+                  backgroundColor: !isButtonDisabled ? '#3b82f6' : '#9ca3af',
+                }}
+                title={
+                  isWeighingActive 
+                    ? 'Sedang dalam proses penimbangan' 
+                    : isNotZero 
+                      ? `Timbangan harus nol (saat ini: ${absoluteWeight.toFixed(1)}g)` 
+                      : 'Mulai penimbangan'
                 }
-              }}
-              // Button disabled if: 1) actively weighing, OR 2) scale reading is not zero
-              disabled={isButtonDisabled}
-              style={{
-                padding: '6px 14px',
-                fontSize: '12px',
-                height: '32px',
-                opacity: !isButtonDisabled ? 1 : 0.5,
-                cursor: !isButtonDisabled ? 'pointer' : 'not-allowed',
-                backgroundColor: !isButtonDisabled ? '#3b82f6' : '#9ca3af',
-                transition: 'opacity 0.2s ease'
-              }}
-              title={
-                isWeighingActive 
-                  ? 'Sedang dalam proses penimbangan' 
-                  : isNotZero 
-                    ? `Timbangan harus nol terlebih dahulu (saat ini: ${absoluteWeight.toFixed(1)}g, toleransi: ±${zeroThreshold}g)` 
-                    : 'Mulai penimbangan'
-              }
               >
                 <Play size={16} />
                 Start
@@ -623,8 +492,7 @@ const RightPanel = ({ workOrder, selectedIngredient, currentPage, currentWeight,
                   e.preventDefault()
                   e.stopPropagation()
                   setShowPrintConfirmation(true)
-                }} 
-                style={{ padding: '6px 14px', fontSize: '12px', height: '32px' }}
+                }}
               >
                 <Save size={16} />
                 Save
@@ -639,15 +507,13 @@ const RightPanel = ({ workOrder, selectedIngredient, currentPage, currentWeight,
         isOpen={showPrintConfirmation}
         onClose={() => setShowPrintConfirmation(false)}
         onSaveAndPrint={async () => {
-          // Save with print (default behavior)
           if (onSaveProgress) {
-            await onSaveProgress(false) // false = don't skip print
+            await onSaveProgress(false)
           }
         }}
         onSaveOnly={async () => {
-          // Save without print
           if (onSaveProgress) {
-            await onSaveProgress(true) // true = skip print
+            await onSaveProgress(true)
           }
         }}
         ingredientName={selectedIngredient?.name || selectedIngredient?.product_name || 'N/A'}

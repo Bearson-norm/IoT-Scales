@@ -1,10 +1,21 @@
-import React, { useState } from 'react'
+import React, { useState, useRef, useEffect } from 'react'
 import { QrCode, X, Check, AlertCircle } from 'lucide-react'
 
 const ProductVerification = ({ ingredient, onVerify, onClose }) => {
   const [scannedCode, setScannedCode] = useState('')
   const [isVerifying, setIsVerifying] = useState(false)
   const [verificationResult, setVerificationResult] = useState(null)
+  const inputRef = useRef(null)
+
+  // Auto-focus input field when modal opens
+  useEffect(() => {
+    if (inputRef.current) {
+      // Small delay to ensure modal is fully rendered
+      setTimeout(() => {
+        inputRef.current?.focus()
+      }, 100)
+    }
+  }, [])
 
   const handleScan = (e) => {
     setScannedCode(e.target.value)
@@ -141,6 +152,7 @@ const ProductVerification = ({ ingredient, onVerify, onClose }) => {
             </div>
             <div style={{ position: 'relative' }}>
               <input
+                ref={inputRef}
                 type="text"
                 className="form-input"
                 placeholder="Product Code atau nama-dd/mm/yyyy"

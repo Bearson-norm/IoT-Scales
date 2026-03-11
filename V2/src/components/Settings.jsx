@@ -140,7 +140,7 @@ const LabelPreview = ({ width, height, dpi, layout = {} }) => {
             fontSize: `${headerFontPx}px`,
             fontWeight: 'bold'
           }}>
-            LABEL PENIMBANGAN
+            LABEL PENIMBANGAN PT KMI
           </div>
           {sampleData.moNumber && (
             <div style={{

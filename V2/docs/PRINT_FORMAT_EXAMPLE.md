@@ -14,7 +14,7 @@ Dokumen ini menjelaskan format print label penimbangan yang akan dicetak pada th
 ```
 ╔═══════════════════════════════════════╗
 ║                                       ║
-║        LABEL PENIMBANGAN              ║
+║        LABEL PENIMBANGAN PT KMI              ║
 ║                                       ║
 ║        MO: MO-2025-001                ║
 ║        ═══════════════════            ║
@@ -43,7 +43,7 @@ Dokumen ini menjelaskan format print label penimbangan yang akan dicetak pada th
 ```
 ╔═══════════════════════════════════════╗
 ║                                       ║
-║        LABEL PENIMBANGAN              ║
+║        LABEL PENIMBANGAN PT KMI              ║
 ║                                       ║
 ║        MO: MO-2025-001                ║
 ║        ═══════════════════            ║
@@ -72,7 +72,7 @@ Dokumen ini menjelaskan format print label penimbangan yang akan dicetak pada th
 ```
 ╔═══════════════════════════════════════╗
 ║                                       ║
-║        LABEL PENIMBANGAN              ║
+║        LABEL PENIMBANGAN PT KMI              ║
 ║                                       ║
 ║        MO: MO-2025-001                ║
 ║        ═══════════════════            ║
@@ -99,7 +99,7 @@ Dokumen ini menjelaskan format print label penimbangan yang akan dicetak pada th
 ## Penjelasan Bagian Label
 
 ### 1. Header
-- **LABEL PENIMBANGAN**: Judul label (font besar)
+- **LABEL PENIMBANGAN PT KMI**: Judul label (font besar)
 - **MO: [nomor MO]**: Nomor Work Order (jika tersedia)
 
 ### 2. Informasi Produk

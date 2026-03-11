@@ -53,10 +53,10 @@ echo [3/5] Building executable...
 REM Clean up old executables to avoid conflicts
 echo   Checking for running processes...
 REM Try to close any running instances first
-tasklist /FI "IMAGENAME eq iot-scales-v2.exe" 2>nul | find /I /N "iot-scales-v2.exe">nul
+tasklist /FI "IMAGENAME eq IoT-scales-V2.exe" 2>nul | find /I /N "IoT-scales-V2.exe">nul
 if "%ERRORLEVEL%"=="0" (
     echo   ⚠️  Found running instance, attempting to close...
-    taskkill /F /IM "iot-scales-v2.exe" >nul 2>&1
+    taskkill /F /IM "IoT-scales-V2.exe" >nul 2>&1
     timeout /t 2 /nobreak >nul
 )
 
@@ -71,12 +71,12 @@ timeout /t 1 /nobreak >nul
 
 REM Try to delete old executables with retries
 echo   Cleaning up old executables...
-if exist "release\iot-scales-v2.exe" (
+if exist "release\IoT-scales-V2.exe" (
     REM Try delete with retries
     set "RETRY_COUNT=0"
     :DELETE_RETRY_1
-    del /F /Q "release\iot-scales-v2.exe" 2>nul
-    if exist "release\iot-scales-v2.exe" (
+    del /F /Q "release\IoT-scales-V2.exe" 2>nul
+    if exist "release\IoT-scales-V2.exe" (
         set /a RETRY_COUNT+=1
         if !RETRY_COUNT! LSS 3 (
             echo   ⚠️  File locked, retrying... (!RETRY_COUNT!/3)
@@ -84,12 +84,12 @@ if exist "release\iot-scales-v2.exe" (
             goto DELETE_RETRY_1
         ) else (
             echo   ❌ Error: Could not delete old executable (may be in use)
-            echo   Please close iot-scales-v2.exe if it's running, then try again.
+            echo   Please close IoT-scales-V2.exe if it's running, then try again.
             set "ERROR_OCCURRED=1"
             goto :END
         )
     ) else (
-        echo   ✅ Deleted old iot-scales-v2.exe
+        echo   ✅ Deleted old IoT-scales-V2.exe
     )
 )
 
@@ -104,7 +104,7 @@ if exist "release\prisma-form-pro.exe" (
 
 REM Build executable directly with output name (using -o for output)
 if not exist "release" mkdir "release"
-call pkg server.js --targets node18-win-x64 -o release\iot-scales-v2.exe
+call pkg server.js --targets node18-win-x64 -o release\IoT-scales-V2.exe
 if errorlevel 1 (
     echo ERROR: Packaging failed!
     set "ERROR_OCCURRED=1"
@@ -112,15 +112,15 @@ if errorlevel 1 (
 )
 
 REM Verify executable was created
-if exist "release\iot-scales-v2.exe" (
+if exist "release\IoT-scales-V2.exe" (
     echo ✅ Executable created successfully
 ) else (
     REM Fallback: check for other names and rename
     if exist "release\server.exe" (
-        ren "release\server.exe" "iot-scales-v2.exe"
+        ren "release\server.exe" "IoT-scales-V2.exe"
         echo ✅ Executable created and renamed from server.exe
     ) else if exist "release\prisma-form-pro.exe" (
-        ren "release\prisma-form-pro.exe" "iot-scales-v2.exe"
+        ren "release\prisma-form-pro.exe" "IoT-scales-V2.exe"
         echo ✅ Executable created and renamed from prisma-form-pro.exe
     ) else (
         echo ⚠️  Warning: Could not find executable in release folder
@@ -241,6 +241,15 @@ if exist "scale-config.json" (
     copy /Y scale-config.json release\scale-config.json >nul
     echo   ✅ Copied scale-config.json
 )
+
+REM Copy .env file if exists (for database configuration)
+if exist ".env" (
+    copy /Y .env release\.env >nul
+    echo   Copied .env
+) else if exist "env.example" (
+    echo   .env not found, copying env.example as .env template
+    copy /Y env.example release\.env >nul
+)
 echo.
 
 REM Step 5: Create run script
@@ -251,7 +260,7 @@ echo cd /d "%%~dp0"
 echo echo Starting IoT Scales V2...
 echo echo Server will be available at: http://localhost:3001
 echo echo.
-echo iot-scales-v2.exe
+echo IoT-scales-V2.exe
 echo pause
 ) > release\run.bat
 echo ✅ Created run.bat
@@ -292,7 +301,7 @@ echo Build Complete!
 echo ========================================
 echo.
 echo 📁 Release files are in: release\
-echo 📄 Executable: release\iot-scales-v2.exe
+echo 📄 Executable: release\IoT-scales-V2.exe
 echo 📄 Run script: release\run.bat
 echo.
 if "!VERIFY_OK!"=="1" (
@@ -303,7 +312,7 @@ if "!VERIFY_OK!"=="1" (
 )
 echo.
 echo Next steps:
-echo   1. Test the executable: cd release ^&^& iot-scales-v2.exe
+echo   1. Test the executable: cd release ^&^& IoT-scales-V2.exe
 echo   2. Or use run.bat: cd release ^&^& run.bat
 echo   3. Build installer (optional): iscc installer.iss
 echo   4. Test serialport functionality by connecting to a COM port

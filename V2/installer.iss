@@ -5,7 +5,7 @@
 #define AppVersion "1.7.0"
 #define AppPublisher "IoT Scales"
 #define AppURL "http://localhost"
-#define AppExeName "iot-scales-v2.exe"
+#define AppExeName "IoT-scales-V2.exe"
 #define AppId "IoTScalesV2"
 
 [Setup]
@@ -42,7 +42,7 @@ Name: "quicklaunchicon"; Description: "{cm:CreateQuickLaunchIcon}"; GroupDescrip
 Name: "startmenu"; Description: "Create Start Menu shortcuts"; GroupDescription: "Additional shortcuts:"
 
 [Files]
-Source: "release\iot-scales-v2.exe"; DestDir: "{app}"; Flags: ignoreversion
+Source: "release\IoT-scales-V2.exe"; DestDir: "{app}"; Flags: ignoreversion
 Source: "release\dist\*"; DestDir: "{app}\dist"; Flags: ignoreversion recursesubdirs createallsubdirs
 Source: "release\database\*"; DestDir: "{app}\database"; Flags: ignoreversion recursesubdirs createallsubdirs
 Source: "release\uploads\*"; DestDir: "{app}\uploads"; Flags: ignoreversion recursesubdirs createallsubdirs

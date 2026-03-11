@@ -83,7 +83,7 @@ const Login = ({ onLogin }) => {
         <div className="login-header">
           <div className="logo-section">
             <div className="logo-icon">
-              <img src={logoImage} alt="KM Logo" />
+              <img src={logoImage} alt="Logo" />
             </div>
             <h1>Kebanggaan Masyarakat Indonesia</h1>
             <p>Manufacturing Weighing System</p>

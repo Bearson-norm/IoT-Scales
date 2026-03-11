@@ -100,6 +100,11 @@ psql -U postgres -d "KMI_MOWS" -f database\migration-add-print-history.sql
 psql -U postgres -d "KMI_MOWS" -f database\migration-add-qc-role-and-reactivate-note.sql
 psql -U postgres -d "KMI_MOWS" -f database\migration-add-sequence-order.sql
 
+REM IMPORTANT: Fix is_active column (Required!)
+psql -U postgres -d "KMI_MOWS" -f database\migrations\add_is_active_to_formulation_ingredients.sql
+REM Atau jika file tidak ada, gunakan:
+REM psql -U postgres -d "KMI_MOWS" -f fix_is_active_column.sql
+
 
 ================================================================
 STEP 12: Verifikasi Setup

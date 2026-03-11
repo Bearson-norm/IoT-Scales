@@ -1,12 +1,13 @@
 import React from 'react'
-import { RefreshCw, Scale, LogOut, User } from 'lucide-react'
+import { RefreshCw, LogOut, User } from 'lucide-react'
+import logoImage from '../assets/logo-km.jpeg'
 
 const Header = ({ currentUser, onRefresh, onLogout }) => {
   return (
     <div className="header">
       <div className="logo">
-        <Scale size={32} />
-        <span>PT Kebanggaan Masyarakat Indonesia</span>
+        <img src={logoImage} alt="Logo" />
+        <span>Kebanggaan Masyarakat Indonesia</span>
       </div>
       
       <button className="refresh-btn" onClick={onRefresh}>

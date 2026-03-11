@@ -49,16 +49,16 @@ export function transformFormulaData(csvData) {
             formulationGroups.set(formulationCode, {
                 formulationCode: row.formulationCode,
                 formulationName: row.formulationName,
-                totalMass: parseFloat(row.totalMass) || 0,
+                totalMass: parseFloat(String(row.totalMass || '0').trim().replace(',', '.')) || 0,
                 uom: row.uom || 'g',
                 totalIngredient: parseInt(row.totalIngredient) || 0,
                 status: row.status || 'active',
                 mustFollowOrder: row.mustFollowOrder === 'TRUE',
-                min: parseFloat(row.min) || 0,
-                max: parseFloat(row.max) || 0,
+                min: parseFloat(String(row.min || '0').trim().replace(',', '.')) || 0,
+                max: parseFloat(String(row.max || '0').trim().replace(',', '.')) || 0,
                 toleranceGroupingName: row.toleranceGroupingName,
                 toleranceType: row.toleranceType || 'mass',
-                maxAllowedWeighingQty: parseFloat(row.maxAllowedWeighingQty) || 0,
+                maxAllowedWeighingQty: parseFloat(String(row.maxAllowedWeighingQty || '0').trim().replace(',', '.')) || 0,
                 implementToleranceGrouping: row.implementToleranceGrouping === 'TRUE',
                 instruction: row.instruction || '',
                 ingredients: []
@@ -69,7 +69,7 @@ export function transformFormulaData(csvData) {
         const ingredient = {
             productCode: row.productCode,
             productName: row.productName,
-            targetMass: parseFloat(row.targetMass) || 0
+            targetMass: parseFloat(String(row.targetMass || '0').trim().replace(',', '.')) || 0
         };
         
         formulationGroups.get(formulationCode).ingredients.push(ingredient);

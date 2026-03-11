@@ -1,95 +1,181 @@
-# 🔧 Fix Import Issues - Summary
+# Summary: Perbaikan Masalah Import Target Mass
 
-## Issues Fixed:
+## Masalah yang Ditemukan
+Tabel `master_formulation_ingredients` di kolom `target_mass` ada nilai yang terimport sebagai `0` padahal seharusnya `0.5` (atau nilai desimal lainnya).
 
-### 1. ✅ Total Ingredients Calculation
-**Problem:** Total ingredients showing as 0 after import
+## Penyebab Root Cause
+1. **Format desimal regional**: CSV menggunakan koma (`,`) sebagai pemisah desimal (misal: `0,5`) sedangkan `parseFloat()` JavaScript hanya mengerti titik (`.`)
+2. **Whitespace**: Nilai dengan spasi tambahan tidak ter-parse dengan benar
+3. **Handling error lemah**: Kode sebelumnya menggunakan `|| 0` yang mengubah semua nilai NaN menjadi 0
 
-**Solution:** Added automatic calculation after import completes:
+## Perbaikan yang Dilakukan
+
+### 1. Kode Server (server.js)
+**Lokasi:** 2 tempat
+- Import Database Endpoint (~baris 8020)
+- Preview Import Endpoint (~baris 7652)
+
+**Perubahan:**
 ```javascript
-// Count ingredients for each formulation
-const countResult = await pool.query(
-  'SELECT COUNT(*) as count FROM master_formulation_ingredients WHERE formulation_id = $1',
-  [formulationId]
-);
+// SEBELUM (BERMASALAH):
+const targetMass = parseFloat(row.targetMass || row.target_mass || 0) || 0;
 
-// Update total_ingredients
-await pool.query(
-  'UPDATE master_formulation SET total_ingredients = $1 WHERE id = $2',
-  [ingredientCount, formulationId]
-);
+// SESUDAH (DIPERBAIKI):
+let targetMassStr = (row.targetMass || row.target_mass || '0').toString().trim();
+targetMassStr = targetMassStr.replace(',', '.');  // Support regional format
+const targetMass = parseFloat(targetMassStr);
+
+if (isNaN(targetMass)) {
+    console.warn(`⚠️  Invalid targetMass...`);
+    // Log warning untuk debugging
+}
 ```
 
-### 2. ✅ Total Mass Calculation
-**Problem:** Total mass showing as 0 after import
+**Fitur Baru:**
+- ✅ Trim whitespace otomatis
+- ✅ Support format desimal dengan koma (0,5 → 0.5)
+- ✅ Validasi NaN dengan warning log
+- ✅ Better error handling
 
-**Solution:** Added automatic calculation of total mass:
-```javascript
-// Count ingredients and sum target_mass
-const countResult = await pool.query(
-  'SELECT COUNT(*) as count, COALESCE(SUM(target_mass), 0) as total FROM master_formulation_ingredients WHERE formulation_id = $1',
-  [formulationId]
-);
+### 2. Utility Import (src/utils/formulaImport.js)
+Diperbaiki parsing untuk semua nilai numerik:
+- `targetMass`
+- `totalMass`
+- `min`, `max`
+- `maxAllowedWeighingQty`
 
-// Update both total_ingredients and total_mass
-await pool.query(
-  'UPDATE master_formulation SET total_ingredients = $1, total_mass = $2 WHERE id = $3',
-  [ingredientCount, totalMass, formulationId]
-);
+### 3. Tools & Dokumentasi Baru
+
+#### Scripts Bantuan:
+1. **scripts/check-zero-target-mass.bat**
+   - Cek semua ingredient dengan target_mass = 0
+   - Tampilkan detail: formulation_code, product_code, dll
+
+2. **scripts/run-fix-zero-target-mass.bat**
+   - Jalankan migration SQL
+   - Identifikasi data yang perlu diperbaiki
+
+#### SQL Migration:
+**database/migrations/fix-zero-target-mass.sql**
+- Query untuk identifikasi masalah
+- Template untuk manual update
+- Panduan verifikasi
+
+#### Dokumentasi Lengkap:
+**docs/FIX_ZERO_TARGET_MASS.md**
+- Penjelasan masalah detail
+- 2 opsi solusi (re-import atau manual fix)
+- Step-by-step guide
+- Best practices
+
+## Cara Memperbaiki Data yang Sudah Ada
+
+### OPSI 1: Re-import CSV (DIREKOMENDASIKAN) ⭐
+
+1. **Buka file CSV asli**
+2. **Pastikan format desimal benar:**
+   - Gunakan TITIK (`.`) bukan koma (`,`)
+   - Contoh: `0.5` ✅ bukan `0,5` ❌
+   - Contoh: `12.75` ✅ bukan `12,75` ❌
+3. **Save CSV dengan format yang benar**
+4. **Di aplikasi:**
+   - Buka menu Database Import
+   - ✅ Centang "Full Refresh"
+   - Upload CSV yang sudah diperbaiki
+5. **Kode yang diperbaiki akan handle dengan benar**
+
+### OPSI 2: Manual Fix via SQL
+
+```bash
+# 1. Identifikasi masalah
+cd scripts
+check-zero-target-mass.bat
+
+# 2. Lihat hasil, catat formulation & product code yang salah
+
+# 3. Update manual (gunakan pgAdmin atau psql)
 ```
 
-### 3. ⚠️ Edit Formulation Data Not Showing
-**Problem:** Form data not displayed in EditFormulation page
+Contoh SQL update:
+```sql
+UPDATE master_formulation_ingredients 
+SET target_mass = 0.5, updated_at = CURRENT_TIMESTAMP
+WHERE formulation_id = (
+    SELECT id FROM master_formulation 
+    WHERE formulation_code = 'FML001'
+)
+AND product_id = (
+    SELECT id FROM master_product 
+    WHERE product_code = 'PRD001'
+)
+AND target_mass = 0;
+```
 
-**Possible Causes:**
-1. FormData state not being populated from API response
-2. useEffect dependency issue
-3. API response structure mismatch
+## Pencegahan di Masa Depan
 
-**Debug Steps:**
-1. Check console logs for formData population
-2. Verify API response structure matches expected format
-3. Check if formulation prop is being passed correctly
+### ✅ Format CSV yang Benar:
+```
+formulationCode,formulationName,productCode,productName,targetMass
+FML001,Formula A,PRD001,Ingredient A,0.5
+FML001,Formula A,PRD002,Ingredient B,1.25
+FML002,Formula B,PRD003,Ingredient C,100.75
+```
 
-**Console logs to check:**
-- `📝 Setting form data:` - Should show populated formData
-- `🔍 Product found:` - Should show SKU product
-- `🔍 Using SKU ID:` - Should show selected SKU ID
+**PENTING:**
+- Desimal pakai TITIK (`.`)
+- Tidak ada spasi di nilai numerik
+- Pastikan kolom targetMass tidak kosong
+
+### ✅ Validasi:
+1. Preview import dulu sebelum import final
+2. Cek console log untuk warning
+3. Verifikasi beberapa sample data setelah import
+
+## Files yang Diubah/Dibuat
+
+### Modified:
+- ✏️ `server.js` (2 lokasi)
+- ✏️ `src/utils/formulaImport.js`
+- ✏️ `database/README.md`
+
+### Created:
+- ✨ `database/migrations/fix-zero-target-mass.sql`
+- ✨ `release/database/migrations/fix-zero-target-mass.sql`
+- ✨ `scripts/check-zero-target-mass.bat`
+- ✨ `scripts/run-fix-zero-target-mass.bat`
+- ✨ `docs/FIX_ZERO_TARGET_MASS.md`
+- ✨ `docs/IMPORT_FIX_SUMMARY.md` (file ini)
+
+## Testing
+
+Untuk test perbaikan:
+1. Buat CSV test dengan nilai desimal: 0.5, 1.25, 100.75
+2. Import dengan preview dulu
+3. Verifikasi nilai ter-parse dengan benar
+4. Check console log tidak ada warning
+5. Query database untuk konfirmasi nilai
+
+```sql
+SELECT 
+    mf.formulation_code,
+    mp.product_code,
+    mfi.target_mass
+FROM master_formulation_ingredients mfi
+INNER JOIN master_formulation mf ON mfi.formulation_id = mf.id
+INNER JOIN master_product mp ON mfi.product_id = mp.id
+ORDER BY mf.formulation_code, mfi.sequence_order;
+```
+
+## Kontak & Support
+
+Jika masih ada masalah:
+1. ✅ Check console log saat import (ada warning?)
+2. ✅ Verifikasi format CSV (pakai titik untuk desimal?)
+3. ✅ Test dengan sample data kecil dulu
+4. ✅ Baca dokumentasi lengkap di `docs/FIX_ZERO_TARGET_MASS.md`
 
 ---
 
-## 🧪 Testing After Fix:
-
-1. **Import database** with Full Refresh enabled
-2. **Check master formulation** list - total_ingredients should show
-3. **Click Edit** on a formulation
-4. **Verify** form fields are populated:
-   - Formulation Code
-   - Formulation Name
-   - Total Mass
-5. **Check ingredients** are loaded in the table
-
----
-
-## 📊 Expected Results:
-
-After import with Full Refresh:
-- ✅ All formulations have correct total_ingredients count
-- ✅ All formulations have correct total_mass calculated
-- ✅ EditFormulation page shows all fields populated
-- ✅ Ingredients table displays all ingredients
-
----
-
-## 🔄 To Test:
-
-1. Stop server (Ctrl+C)
-2. Restart server: `npm run start-server`
-3. Import database with Full Refresh
-4. Check formulations list
-5. Edit a formulation and verify data
-
-
-
-
-
+**Status:** ✅ SELESAI - Ready to use
+**Date:** 2026-02-14
+**Impact:** Critical fix untuk data integrity

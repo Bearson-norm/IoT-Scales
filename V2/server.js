@@ -9,6 +9,48 @@ const url = require('url');
 const WebSocket = require('ws');
 const bcrypt = require('bcryptjs');
 
+// Load .env file manually (no dotenv dependency needed)
+// Searches: 1) exe directory, 2) current working directory, 3) __dirname
+(function loadEnvFile() {
+  const possiblePaths = [];
+  if (process.pkg) {
+    possiblePaths.push(path.join(path.dirname(process.execPath), '.env'));
+  }
+  possiblePaths.push(path.join(process.cwd(), '.env'));
+  possiblePaths.push(path.join(__dirname, '.env'));
+
+  for (const envPath of possiblePaths) {
+    try {
+      if (fs.existsSync(envPath)) {
+        const content = fs.readFileSync(envPath, 'utf-8');
+        const lines = content.split(/\r?\n/);
+        for (const line of lines) {
+          const trimmed = line.trim();
+          if (!trimmed || trimmed.startsWith('#')) continue;
+          const eqIndex = trimmed.indexOf('=');
+          if (eqIndex === -1) continue;
+          const key = trimmed.substring(0, eqIndex).trim();
+          let value = trimmed.substring(eqIndex + 1).trim();
+          // Remove surrounding quotes if present
+          if ((value.startsWith('"') && value.endsWith('"')) ||
+              (value.startsWith("'") && value.endsWith("'"))) {
+            value = value.slice(1, -1);
+          }
+          // Only set if not already defined (existing env vars take priority)
+          if (!process.env[key]) {
+            process.env[key] = value;
+          }
+        }
+        console.log('Loaded .env from:', envPath);
+        return;
+      }
+    } catch (e) {
+      // Ignore errors, try next path
+    }
+  }
+  console.log('No .env file found, using default configuration');
+})();
+
 const app = express();
 const server = http.createServer(app);
 const PORT = process.env.PORT || 3001;
@@ -279,23 +321,25 @@ async function initializeDatabase() {
     `);
     
     if (tablesCheck.rows[0].count < 4) {
+      const dbName = process.env.DB_NAME || 'FLB_MOWS';
       console.warn('⚠️  Database tables not found. Please run database setup:');
       console.warn('   1. Run setup-database.bat (Windows)');
-      console.warn('   2. Or manually: psql -U postgres -d FLB_MOWS -f database/schema.sql');
+      console.warn(`   2. Or manually: psql -U postgres -d ${dbName} -f database/schema.sql`);
       return false;
     }
     
     dbInitialized = true;
     return true;
   } catch (error) {
+    const dbName = process.env.DB_NAME || 'FLB_MOWS';
     console.error('❌ Database connection error:', error.message);
     console.error('   Please ensure:');
     console.error('   1. PostgreSQL is running');
-    console.error('   2. Database FLB_MOWS exists');
+    console.error(`   2. Database ${dbName} exists`);
     console.error('   3. Connection settings are correct');
     console.error('   Host:', process.env.DB_HOST || 'localhost');
     console.error('   Port:', process.env.DB_PORT || 5432);
-    console.error('   Database:', process.env.DB_NAME || 'FLB_MOWS');
+    console.error('   Database:', dbName);
     return false;
   }
 }
@@ -4310,7 +4354,7 @@ function generateZPLReceipt(data) {
   };
   
   // === HEADER ===
-  addText(headerFontDots, 'LABEL PENIMBANGAN KMI', { spacing: lineSpacing });
+  addText(headerFontDots, 'LABEL PENIMBANGAN PT KMI', { spacing: lineSpacing });
 
   if (moNumber) {
     addText(labelFontDots, `MO: ${escapeZPL(moNumber)}`, { spacing: sectionSpacing });
@@ -4918,7 +4962,8 @@ app.post('/api/weighing/save-progress', async (req, res) => {
     
     // Create or update work order
     // IMPORTANT: Always update planned_quantity to preserve scaling factor
-    const plannedQuantity = progress?.totalQuantity || 1;
+    // FIX: Use parseFloat to preserve full decimal precision for quantity
+    const plannedQuantity = progress?.totalQuantity ? parseFloat(progress.totalQuantity) : 1;
     
     console.log(`📏 Work Order Quantity: ${plannedQuantity}g (Scaling Factor: ${(plannedQuantity / 1000).toFixed(2)}x)`);
     
@@ -5427,7 +5472,9 @@ app.post('/api/weighing/save-progress', async (req, res) => {
           console.warn('⚠️ Could not fetch planned_quantity, using default 1000:', pqError.message);
         }
         
-        const scalingFactor = (plannedQuantity / 1000).toFixed(2);
+        // FIX: Preserve full decimal precision for scaling factor calculations
+        // Only use toFixed() for display purposes, not for calculations
+        const scalingFactor = plannedQuantity / 1000;
         const remainingWeight = Math.max(0, targetMass - accumulatedMass);
         
         // Get formulation name and ingredient name
@@ -6545,7 +6592,8 @@ app.get('/api/history/:mo', async (req, res) => {
         mp.product_code,
         mp.product_name as ingredient_name,
         -- Use scaled target_mass from weighing_progress if exists, otherwise calculate from base
-        COALESCE(wp.target_mass, ROUND(mfi.target_mass * ${scalingFactor}, 2)) as target_mass,
+        -- FIX: Preserve full decimal precision, don't round (database supports DECIMAL(12,3))
+        COALESCE(wp.target_mass, CAST(mfi.target_mass * ${scalingFactor} AS DECIMAL(12,3))) as target_mass,
         COALESCE(wp.actual_mass, 0) as current_accumulated_mass,
         COALESCE(wp.status, 'pending') as current_status,
         wp.tolerance_min,
@@ -6798,9 +6846,10 @@ app.get('/api/work-orders/:mo', async (req, res) => {
          mfi.target_mass as base_target_mass,
          -- CRITICAL FIX: Use scaled target_mass from weighing_progress if exists
          -- Otherwise, calculate scaled target from base * scaling factor
+         -- FIX: Preserve full decimal precision, don't round (database supports DECIMAL(12,3))
          COALESCE(
            wp.target_mass, 
-           ROUND(mfi.target_mass * ${scalingFactor}, 2)
+           CAST(mfi.target_mass * ${scalingFactor} AS DECIMAL(12,3))
          ) as target_mass,
          mp.product_code,
          mp.product_name,
@@ -6818,15 +6867,15 @@ app.get('/api/work-orders/:mo', async (req, res) => {
          (SELECT MAX(session_number) 
           FROM weighing_sessions 
           WHERE work_order_id = $1 AND ingredient_id = mfi.id) as last_session_number,
-         -- Calculate progress percentage using SCALED target_mass
+         -- Calculate progress percentage using SCALED target_mass (preserve precision)
          CASE 
-           WHEN COALESCE(wp.target_mass, ROUND(mfi.target_mass * ${scalingFactor}, 2)) > 0 THEN 
-             ROUND((COALESCE(wp.actual_mass, 0) / COALESCE(wp.target_mass, ROUND(mfi.target_mass * ${scalingFactor}, 2))) * 100, 2)
+           WHEN COALESCE(wp.target_mass, CAST(mfi.target_mass * ${scalingFactor} AS DECIMAL(12,3))) > 0 THEN 
+             CAST((COALESCE(wp.actual_mass, 0) / COALESCE(wp.target_mass, CAST(mfi.target_mass * ${scalingFactor} AS DECIMAL(12,3)))) * 100 AS DECIMAL(12,3))
            ELSE 0
          END as progress_percentage,
-         -- Calculate remaining weight using SCALED target_mass
+         -- Calculate remaining weight using SCALED target_mass (preserve precision)
          GREATEST(0, 
-           COALESCE(wp.target_mass, ROUND(mfi.target_mass * ${scalingFactor}, 2)) - COALESCE(wp.actual_mass, 0)
+           COALESCE(wp.target_mass, CAST(mfi.target_mass * ${scalingFactor} AS DECIMAL(12,3))) - COALESCE(wp.actual_mass, 0)
          ) as remaining_weight,
          -- Check if within tolerance (if tolerance is set)
          CASE
@@ -7139,31 +7188,32 @@ app.post('/api/work-orders/:mo/reactivate', async (req, res) => {
   }
 });
 
-// Get all products (SFG/Mixing data from formulations)
+// Get all products from master_product table
 app.get('/api/products', async (req, res) => {
   try {
     const query = `
       SELECT 
-        mf.id,
-        mf.formulation_code as product_code,
-        mf.formulation_name as product_name,
-        'sfg' as product_category,
-        'standard' as type_tolerance,
-        mf.status,
-        mf.created_at,
-        mf.updated_at,
-        NULL as tolerance_grouping_code,
-        NULL as tolerance_grouping_name
-      FROM master_formulation mf
-      ORDER BY mf.formulation_name
+        mp.id,
+        mp.product_code,
+        mp.product_name,
+        mp.product_category,
+        mp.type_tolerance,
+        mp.tolerance_grouping_id,
+        mp.status,
+        mp.created_at,
+        mp.updated_at,
+        mtg.code as tolerance_grouping_code,
+        mtg.name as tolerance_grouping_name
+      FROM master_product mp
+      LEFT JOIN master_tolerance_grouping mtg ON mp.tolerance_grouping_id = mtg.id
+      ORDER BY mp.product_name
     `;
     
     const result = await pool.query(query);
     res.json({
       success: true,
       data: result.rows,
-      count: result.rows.length,
-      category: 'sfg'
+      count: result.rows.length
     });
   } catch (error) {
     console.error('Error fetching products:', error);
@@ -7352,15 +7402,19 @@ app.delete('/api/products/:id', async (req, res) => {
   try {
     const productId = req.params.id;
     
-    const query = 'DELETE FROM master_product WHERE id = $1 RETURNING *';
-    const result = await pool.query(query, [productId]);
+    // Check if product exists first
+    const checkQuery = 'SELECT id, product_name FROM master_product WHERE id = $1';
+    const checkResult = await pool.query(checkQuery, [productId]);
     
-    if (result.rows.length === 0) {
+    if (checkResult.rows.length === 0) {
       return res.status(404).json({
         success: false,
         error: 'Product not found'
       });
     }
+    
+    const query = 'DELETE FROM master_product WHERE id = $1 RETURNING *';
+    const result = await pool.query(query, [productId]);
     
     res.json({
       success: true,
@@ -7368,6 +7422,15 @@ app.delete('/api/products/:id', async (req, res) => {
     });
   } catch (error) {
     console.error('Error deleting product:', error);
+    
+    // Handle foreign key constraint violation
+    if (error.code === '23503') {
+      return res.status(400).json({
+        success: false,
+        error: 'Produk tidak dapat dihapus karena masih digunakan di formulasi atau sesi penimbangan. Ubah status menjadi inactive sebagai gantinya.'
+      });
+    }
+    
     res.status(500).json({
       success: false,
       error: 'Failed to delete product',
@@ -7446,15 +7509,32 @@ app.delete('/api/formulations/:id', async (req, res) => {
   try {
     const formulationId = req.params.id;
     
-    const query = 'DELETE FROM master_formulation WHERE id = $1 RETURNING *';
-    const result = await pool.query(query, [formulationId]);
-    
-    if (result.rows.length === 0) {
-      return res.status(404).json({
+    // Check if formulation exists
+    const checkResult = await pool.query(
+      'SELECT id, formulation_name, formulation_code FROM master_formulation WHERE id = $1',
+      [formulationId]
+    );
+    if (checkResult.rows.length === 0) {
+      return res.status(404).json({ success: false, error: 'Formulation not found' });
+    }
+
+    // Safety: do not delete formulations that are already used in production (work orders).
+    // PostgreSQL will also block it via FK, but we return a clear 400 instead of 500.
+    const woCheck = await pool.query(
+      'SELECT COUNT(*)::int as count FROM work_orders WHERE formulation_id = $1',
+      [formulationId]
+    );
+    const woCount = woCheck.rows?.[0]?.count ?? 0;
+    if (woCount > 0) {
+      return res.status(400).json({
         success: false,
-        error: 'Formulation not found'
+        error: `Formulasi tidak bisa dihapus karena sudah digunakan oleh ${woCount} Work Order/History. Ubah status menjadi inactive sebagai gantinya.`
       });
     }
+
+    // Delete the formulation (master_formulation_ingredients has ON DELETE CASCADE)
+    const query = 'DELETE FROM master_formulation WHERE id = $1 RETURNING *';
+    await pool.query(query, [formulationId]);
     
     res.json({
       success: true,
@@ -7462,6 +7542,15 @@ app.delete('/api/formulations/:id', async (req, res) => {
     });
   } catch (error) {
     console.error('Error deleting formulation:', error);
+    
+    // Handle foreign key constraint violation
+    if (error.code === '23503') {
+      return res.status(400).json({
+        success: false,
+        error: 'Formulasi tidak dapat dihapus karena masih memiliki data terkait (mis. work orders). Ubah status menjadi inactive sebagai gantinya.'
+      });
+    }
+    
     res.status(500).json({
       success: false,
       error: 'Failed to delete formulation',
@@ -7644,7 +7733,18 @@ app.post('/api/preview-import', async (req, res) => {
           const formulationName = row.formulationName;
           const productCode = row.productCode;
           const productName = row.productName;
-          const targetMass = parseFloat(row.targetMass) || 0;
+          
+          // Parse targetMass more robustly
+          // Handle different decimal separators and trim whitespace
+          let targetMassStr = (row.targetMass || '0').toString().trim();
+          // Replace comma with period for decimal separator (support regional formats)
+          targetMassStr = targetMassStr.replace(',', '.');
+          const targetMass = parseFloat(targetMassStr);
+          
+          // Validate: if parsing failed (NaN), use 0 and log warning
+          if (isNaN(targetMass)) {
+            console.warn(`⚠️  Invalid targetMass value for ${formulationCode}-${productCode}: "${row.targetMass}" (parsed as NaN). Using 0.`);
+          }
           
           // Track unique products
           if (!productsMap.has(productCode)) {
@@ -8012,7 +8112,19 @@ app.post('/api/import-database', async (req, res) => {
           const formulationName = row.formulationName || row.formulation_name || '';
           const productCode = row.productCode || row.product_code || '';
           const productName = row.productName || row.product_name || '';
-          const targetMass = parseFloat(row.targetMass || row.target_mass || 0) || 0;
+          
+          // Parse targetMass more robustly
+          // Handle different decimal separators and trim whitespace
+          let targetMassStr = (row.targetMass || row.target_mass || '0').toString().trim();
+          // Replace comma with period for decimal separator (support regional formats)
+          targetMassStr = targetMassStr.replace(',', '.');
+          const targetMass = parseFloat(targetMassStr);
+          
+          // Validate: if parsing failed (NaN), log warning and skip
+          if (isNaN(targetMass)) {
+            console.warn(`⚠️  Invalid targetMass value for ${formulationCode}-${productCode}: "${row.targetMass || row.target_mass}" (parsed as NaN). Skipping row.`);
+            continue;
+          }
           
           // Validate required fields
           if (!formulationCode || !productCode) {

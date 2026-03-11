@@ -36,7 +36,8 @@ console.log('3️⃣  Packaging server executable...');
 try {
   // Clean up old executables to avoid conflicts
   const oldFiles = [
-    path.join(releaseDir, 'iot-scales-v2.exe'),
+    path.join(releaseDir, 'IoT-scales-V2.exe'),
+    path.join(releaseDir, 'IoT-scales-V2.exe'),
     path.join(releaseDir, 'server.exe'),
     path.join(releaseDir, 'prisma-form-pro.exe')
   ];
@@ -82,16 +83,17 @@ try {
   });
   
   // Build executable directly with output name (using -o for output)
-  const outputExe = path.join(releaseDir, 'iot-scales-v2.exe');
+  const outputExe = path.join(releaseDir, 'IoT-scales-V2.exe');
   execSync(`pkg server.js --targets node18-win-x64 -o "${outputExe}"`, { stdio: 'inherit' });
   
   // Verify executable was created
   if (fs.existsSync(outputExe)) {
-    console.log('✅ Executable created successfully: iot-scales-v2.exe\n');
+    console.log('✅ Executable created successfully: IoT-scales-V2.exe\n');
   } else {
     // Fallback: check for other names and rename
     const oldName1 = path.join(releaseDir, 'prisma-form-pro.exe');
     const oldName2 = path.join(releaseDir, 'server.exe');
+    const oldName3 = path.join(releaseDir, 'IoT-scales-V2.exe');
     
     if (fs.existsSync(oldName2)) {
       fs.renameSync(oldName2, outputExe);
@@ -99,6 +101,9 @@ try {
     } else if (fs.existsSync(oldName1)) {
       fs.renameSync(oldName1, outputExe);
       console.log('✅ Executable created and renamed from prisma-form-pro.exe\n');
+    } else if (fs.existsSync(oldName3)) {
+      fs.renameSync(oldName3, outputExe);
+      console.log('✅ Executable created and renamed from IoT-scales-V2.exe\n');
     } else {
       console.log('⚠️  Warning: Could not find executable in release folder\n');
       console.log('   Please check if pkg build was successful\n');

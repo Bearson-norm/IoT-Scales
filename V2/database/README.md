@@ -197,4 +197,34 @@ psql -U postgres -d FLB_MOWS < backup.sql
 3. **Backup Monitoring**: Ensure regular backups are successful
 4. **Disk Space**: Monitor database size and disk usage
 
+## Migrations
+
+The `migrations/` folder contains database migration scripts for schema updates and data fixes.
+
+### Available Migrations
+
+#### fix-zero-target-mass.sql
+Fixes target_mass values that were incorrectly imported as 0 due to decimal parsing issues.
+
+**Usage:**
+```bash
+# Check for zero target mass values
+cd scripts
+check-zero-target-mass.bat
+
+# Run the fix migration (identification only)
+run-fix-zero-target-mass.bat
+```
+
+**Issue:** When importing CSV files, decimal values like `0.5` might be imported as `0` if:
+- CSV uses comma (`,`) as decimal separator instead of period (`.`)
+- Values have extra whitespace
+- Values are empty/null
+
+**Solution:** The import code has been updated to handle various decimal formats. For existing data:
+1. **Option A (Recommended)**: Fix your CSV file and re-import with "Full Refresh"
+2. **Option B**: Use the migration SQL to identify and manually fix affected records
+
+See [docs/FIX_ZERO_TARGET_MASS.md](../docs/FIX_ZERO_TARGET_MASS.md) for detailed instructions.
+
 

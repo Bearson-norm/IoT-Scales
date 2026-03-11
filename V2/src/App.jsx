@@ -2112,7 +2112,9 @@ function AppContent() {
       // Just close modal after verification, don't start weighing yet
       setShowProductVerification(false)
     } else {
+      // User cancelled or verification failed - reset selectedIngredient
       setShowProductVerification(false)
+      setSelectedIngredient(null)
     }
   }
 
@@ -3319,7 +3321,10 @@ function AppContent() {
         <ProductVerification 
           ingredient={selectedIngredient}
           onVerify={handleProductVerification}
-          onClose={() => setShowProductVerification(false)}
+          onClose={() => {
+            setShowProductVerification(false)
+            setSelectedIngredient(null) // Reset ingredient when modal is cancelled
+          }}
         />
       )}
 

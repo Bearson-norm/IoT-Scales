@@ -93,10 +93,8 @@ const LeftPanel = ({ workOrder, recipe, onIngredientClick, onStartScan, onStartM
           className="btn btn-primary btn-scan-mo"
           onClick={onStartMOScan}
           title="Scan MO"
-          style={{ marginTop: '8px', width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6 }}
         >
-          <Package size={16} />
-          Scan MO
+          <Package size={14} />
         </button>
       </div>
     </div>
