@@ -19,7 +19,7 @@ const config = {
     host: process.env.DB_HOST || 'localhost',
     port: process.env.DB_PORT || 5432,
     database: process.env.DB_NAME || 'FLB_MOWS',
-    username: process.env.DB_USER || 'postgres',
+    username: process.env.DB_USER || 'admin',
     password: process.env.DB_PASSWORD || 'Admin123',
     dialect: 'postgres',
     logging: false,

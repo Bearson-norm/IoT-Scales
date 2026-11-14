@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react'
 import { Search, Plus, Edit, Trash2, Package, Filter, Download, Upload, Database as DatabaseIcon, Users, Settings, Target } from 'lucide-react'
 import MasterProduct from './database/MasterProduct'
 import MasterFormulation from './database/MasterFormulation'
-import MasterToleranceGrouping from './database/MasterToleranceGrouping'
+import MasterWeighingToleranceTemplate from './database/MasterWeighingToleranceTemplate'
 import MasterUser from './database/MasterUser'
 import apiService from '../services/api.js'
 
@@ -30,7 +30,7 @@ const Database = () => {
       const totalFormulations = formulationsResponse.success ? formulationsResponse.data.length : 0
 
       // Load tolerance groupings count (as alternative to users)
-      const toleranceResponse = await apiService.getToleranceGroupings()
+      const toleranceResponse = await apiService.getWeighingToleranceTemplates()
       const totalToleranceGroupings = toleranceResponse.success ? toleranceResponse.data.length : 0
 
       setStats({
@@ -61,7 +61,7 @@ const Database = () => {
   const tabs = [
     { id: 'product', label: 'Master Product', icon: Package },
     { id: 'formulation', label: 'Master Formulation', icon: DatabaseIcon },
-    { id: 'tolerance', label: 'Master Tolerance Grouping', icon: Target },
+    { id: 'tolerance', label: 'Template Toleransi Penimbangan', icon: Target },
     { id: 'user', label: 'Master User', icon: Users }
   ]
 
@@ -72,7 +72,7 @@ const Database = () => {
       case 'formulation':
         return <MasterFormulation />
       case 'tolerance':
-        return <MasterToleranceGrouping />
+        return <MasterWeighingToleranceTemplate />
       case 'user':
         return <MasterUser />
       default:
@@ -123,7 +123,7 @@ const Database = () => {
                 <span className="stat-value">{stats.totalFormulations}</span>
               </div>
               <div className="stat-item">
-                <span className="stat-label">Tolerance Groupings:</span>
+                <span className="stat-label">Tolerance Templates:</span>
                 <span className="stat-value">{stats.totalToleranceGroupings}</span>
               </div>
             </div>

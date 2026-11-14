@@ -1,0 +1,47 @@
+<html>
+<head>
+<meta http-equiv="X-UA-Compatible" content="IE=edge" />
+<title>IoT Scales V2</title>
+<HTA:APPLICATION ID="IoTScalesLauncher" BORDER="thin" CAPTION="yes" SHOWINTASKBAR="yes" SINGLEINSTANCE="yes" SYSMENU="yes" />
+<style>
+  body { font-family: Segoe UI, Arial, sans-serif; margin: 24px; background: #f3f4f6; }
+  h1 { font-size: 18px; margin-bottom: 8px; }
+  p { color: #4b5563; font-size: 13px; }
+  button { padding: 10px 16px; margin: 6px 6px 6px 0; font-size: 13px; cursor: pointer; }
+  .primary { background: #2563eb; color: white; border: none; border-radius: 6px; }
+  .secondary { background: white; border: 1px solid #d1d5db; border-radius: 6px; }
+</style>
+<script language="VBScript">
+Function AppDir
+  Dim fso, htaPath
+  Set fso = CreateObject("Scripting.FileSystemObject")
+  htaPath = Replace(Unescape(document.location.pathname), "/", "\")
+  If Left(htaPath, 1) = "\" Then htaPath = Mid(htaPath, 2)
+  AppDir = fso.GetParentFolderName(htaPath)
+End Function
+
+Sub StartApp
+  Dim sh: Set sh = CreateObject("WScript.Shell")
+  sh.Run "wscript.exe """ & AppDir() & "\Start-IoT-Scales-Silent.vbs""", 0, False
+  window.close
+End Sub
+
+Sub StopApp
+  Dim sh: Set sh = CreateObject("WScript.Shell")
+  sh.Run "wscript.exe """ & AppDir() & "\Stop-IoT-Scales.vbs""", 1, False
+End Sub
+
+Sub OpenBrowser
+  Dim sh: Set sh = CreateObject("WScript.Shell")
+  sh.Run "http://localhost:3001/", 1, False
+End Sub
+</script>
+</head>
+<body>
+  <h1>IoT Scales V2</h1>
+  <p>Jalankan server tanpa jendela terminal CMD di belakang.</p>
+  <button class="primary" onclick="StartApp">Start Application</button>
+  <button class="secondary" onclick="OpenBrowser">Open Browser</button>
+  <button class="secondary" onclick="StopApp">Stop Server</button>
+</body>
+</html>

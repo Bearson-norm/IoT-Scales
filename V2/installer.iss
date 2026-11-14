@@ -6,6 +6,8 @@
 #define AppPublisher "IoT Scales"
 #define AppURL "http://localhost"
 #define AppExeName "IoT-scales-V2.exe"
+#define LauncherVbs "Open-Launcher.vbs"
+#define SilentStartVbs "Start-IoT-Scales-Silent.vbs"
 #define AppId "IoTScalesV2"
 
 [Setup]
@@ -43,6 +45,10 @@ Name: "startmenu"; Description: "Create Start Menu shortcuts"; GroupDescription:
 
 [Files]
 Source: "release\IoT-scales-V2.exe"; DestDir: "{app}"; Flags: ignoreversion
+Source: "launcher\IoT-Scales-Launcher.hta"; DestDir: "{app}"; Flags: ignoreversion
+Source: "launcher\Open-Launcher.vbs"; DestDir: "{app}"; Flags: ignoreversion
+Source: "launcher\Start-IoT-Scales-Silent.vbs"; DestDir: "{app}"; Flags: ignoreversion
+Source: "launcher\Stop-IoT-Scales.vbs"; DestDir: "{app}"; Flags: ignoreversion
 Source: "release\dist\*"; DestDir: "{app}\dist"; Flags: ignoreversion recursesubdirs createallsubdirs
 Source: "release\database\*"; DestDir: "{app}\database"; Flags: ignoreversion recursesubdirs createallsubdirs
 Source: "release\uploads\*"; DestDir: "{app}\uploads"; Flags: ignoreversion recursesubdirs createallsubdirs
@@ -52,13 +58,16 @@ Source: "release\README.md"; DestDir: "{app}"; Flags: ignoreversion isreadme
 ; Note: Don't use "Flags: ignoreversion" on any shared system files
 
 [Icons]
-Name: "{group}\{#AppName}"; Filename: "{app}\{#AppExeName}"
+Name: "{group}\{#AppName}"; Filename: "{app}\{#LauncherVbs}"; IconFilename: "{app}\{#AppExeName}"
+Name: "{group}\{#AppName} (Quick Start)"; Filename: "{app}\{#SilentStartVbs}"; IconFilename: "{app}\{#AppExeName}"
+Name: "{group}\Stop {#AppName}"; Filename: "{app}\Stop-IoT-Scales.vbs"; IconFilename: "{app}\{#AppExeName}"
+Name: "{group}\{#AppName} (Console Debug)"; Filename: "{app}\{#AppExeName}"; Comment: "With terminal window"
 Name: "{group}\{cm:UninstallProgram,{#AppName}}"; Filename: "{uninstallexe}"
-Name: "{autodesktop}\{#AppName}"; Filename: "{app}\{#AppExeName}"; Tasks: desktopicon
-Name: "{userappdata}\Microsoft\Internet Explorer\Quick Launch\{#AppName}"; Filename: "{app}\{#AppExeName}"; Tasks: quicklaunchicon
+Name: "{autodesktop}\{#AppName}"; Filename: "{app}\{#LauncherVbs}"; IconFilename: "{app}\{#AppExeName}"; Tasks: desktopicon
+Name: "{userappdata}\Microsoft\Internet Explorer\Quick Launch\{#AppName}"; Filename: "{app}\{#SilentStartVbs}"; Tasks: quicklaunchicon
 
 [Run]
-Filename: "{app}\{#AppExeName}"; Description: "{cm:LaunchProgram,{#StringChange(AppName, '&', '&&')}}"; Flags: nowait postinstall skipifsilent
+Filename: "{sys}\wscript.exe"; Parameters: """{app}\{#SilentStartVbs}"""; Description: "{cm:LaunchProgram,{#StringChange(AppName, '&', '&&')}}"; Flags: nowait postinstall skipifsilent
 
 [Code]
 procedure InitializeWizard;

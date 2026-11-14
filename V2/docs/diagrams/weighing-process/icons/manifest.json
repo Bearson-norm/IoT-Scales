@@ -1,0 +1,58 @@
+{
+  "react": {
+    "source": "svgl",
+    "url": "https://svgl.app/library/react_light.svg",
+    "file": "react.svg",
+    "bytes": 6534,
+    "dark_file": "react_dark.svg",
+    "dark_url": "https://svgl.app/library/react_dark.svg"
+  },
+  "express": {
+    "source": "devicon",
+    "url": "https://raw.githubusercontent.com/devicons/devicon/master/icons/express/express-original.svg",
+    "file": "express.svg",
+    "bytes": 914
+  },
+  "nodejs": {
+    "source": "svgl",
+    "url": "https://svgl.app/library/nodejs.svg",
+    "file": "nodejs.svg",
+    "bytes": 2491
+  },
+  "postgresql": {
+    "source": "svgl",
+    "url": "https://svgl.app/library/postgresql.svg",
+    "file": "postgresql.svg",
+    "bytes": 3944
+  },
+  "operator": {
+    "source": "lucide",
+    "url": "https://cdn.jsdelivr.net/npm/lucide-static/icons/user.svg",
+    "file": "operator.svg",
+    "bytes": 371
+  },
+  "scanner": {
+    "source": "lucide",
+    "url": "https://cdn.jsdelivr.net/npm/lucide-static/icons/scan-barcode.svg",
+    "file": "scanner.svg",
+    "bytes": 517
+  },
+  "scale": {
+    "source": "lucide",
+    "url": "https://cdn.jsdelivr.net/npm/lucide-static/icons/scale.svg",
+    "file": "scale.svg",
+    "bytes": 468
+  },
+  "ws": {
+    "source": "lucide",
+    "url": "https://cdn.jsdelivr.net/npm/lucide-static/icons/radio.svg",
+    "file": "ws.svg",
+    "bytes": 510
+  },
+  "printer": {
+    "source": "lucide",
+    "url": "https://cdn.jsdelivr.net/npm/lucide-static/icons/printer.svg",
+    "file": "printer.svg",
+    "bytes": 481
+  }
+}

@@ -1,7 +1,9 @@
 import React, { useState, useEffect } from 'react'
 import { ArrowLeft, Printer, Calendar, Package, FileText, List } from 'lucide-react'
+import useBranding from '../../hooks/useBranding'
 
 const WeighingReceiverDetail = ({ dataId, onBack }) => {
+  const { companyName } = useBranding()
   const [data, setData] = useState(null)
   const [loading, setLoading] = useState(true)
   const [activeView, setActiveView] = useState('summary') // 'history' or 'summary'
@@ -184,6 +186,14 @@ const WeighingReceiverDetail = ({ dataId, onBack }) => {
               border-bottom: 2px solid #1f2937;
             }
             
+            .print-company {
+              font-size: 14pt;
+              font-weight: bold;
+              color: #1f2937;
+              margin-bottom: 6px;
+              letter-spacing: 0.5px;
+            }
+            
             .print-title {
               font-size: 18pt;
               font-weight: bold;
@@ -293,6 +303,7 @@ const WeighingReceiverDetail = ({ dataId, onBack }) => {
         </head>
         <body>
           <div class="print-header">
+            <div class="print-company">${companyName}</div>
             <div class="print-title">Report Summary Penimbangan</div>
             <div class="print-info">
               <div class="print-info-item">
@@ -341,7 +352,8 @@ const WeighingReceiverDetail = ({ dataId, onBack }) => {
           </div>
           
           <div class="print-footer">
-            <div>Laporan ini dicetak pada: ${new Date().toLocaleString('id-ID')}</div>
+            <div>${companyName}</div>
+            <div style="margin-top: 4px;">Laporan ini dicetak pada: ${new Date().toLocaleString('id-ID')}</div>
             <div style="margin-top: 4px;">Work Order: ${workOrder.work_order}</div>
           </div>
         </body>

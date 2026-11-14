@@ -51,6 +51,19 @@ Stores tolerance grouping configurations for weighing operations.
 | created_at | TIMESTAMP | Creation timestamp |
 | updated_at | TIMESTAMP | Last update timestamp |
 
+#### Weighing tolerance templates (runtime penimbangan)
+
+Migration: `database/migrations/add_weighing_tolerance_templates.sql` (also applied on server startup).
+
+| Table | Purpose |
+|-------|---------|
+| `weighing_tolerance_template` | Named template; one row may be `is_default` for global fallback |
+| `weighing_tolerance_template_band` | Inclusive target qty range (g) and symmetric tolerance ±X (g) |
+
+Assignment (most specific wins): `master_product.weighing_tolerance_template_id` → `master_formulation.weighing_tolerance_template_id` → default template.
+
+Saved MO bounds are stored on `weighing_progress.tolerance_min/max` and locked after first save.
+
 #### 2. master_product
 Stores product master data.
 
@@ -62,6 +75,7 @@ Stores product master data.
 | product_category | VARCHAR(20) | raw/sfg |
 | type_tolerance | VARCHAR(20) | high/standard/low |
 | tolerance_grouping_id | UUID | FK to master_tolerance_grouping |
+| weighing_tolerance_template_id | UUID | Optional FK to weighing_tolerance_template (override for timbang) |
 | status | VARCHAR(20) | active/inactive |
 | created_at | TIMESTAMP | Creation timestamp |
 | updated_at | TIMESTAMP | Last update timestamp |
@@ -77,6 +91,7 @@ Stores formulation master data.
 | sku | VARCHAR(50) | SKU reference |
 | total_mass | DECIMAL(12,3) | Total mass in grams |
 | total_ingredients | INTEGER | Number of ingredients |
+| weighing_tolerance_template_id | UUID | Optional FK to weighing_tolerance_template |
 | status | VARCHAR(20) | active/inactive |
 | created_at | TIMESTAMP | Creation timestamp |
 | updated_at | TIMESTAMP | Last update timestamp |

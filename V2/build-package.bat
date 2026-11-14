@@ -194,11 +194,19 @@ if exist "node_modules\node-addon-api" (
     )
 )
 
-REM Copy dist folder
+REM Copy dist folder (must replace entirely — merge-xcopy leaves old hashed JS/CSS and breaks updates)
 if exist "dist" (
-    echo   Copying dist folder...
+    echo   Syncing dist folder to release...
+    if exist "release\dist" (
+        rmdir /S /Q "release\dist" 2>nul
+    )
     xcopy /E /I /Y /Q dist release\dist >nul
-    echo   ✅ Copied dist
+    if errorlevel 1 (
+        echo   ERROR: Failed to copy dist to release\dist
+        set "ERROR_OCCURRED=1"
+        goto :END
+    )
+    echo   ✅ Copied fresh dist ^(old assets removed^)
 )
 
 REM Copy database folder

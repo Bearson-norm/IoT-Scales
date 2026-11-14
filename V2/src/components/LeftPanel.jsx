@@ -1,85 +1,71 @@
 import React from 'react'
-import { Home, List, Settings, History, AlertTriangle, QrCode, Database, Upload, Package, Users, Inbox } from 'lucide-react'
+import { Home, Settings, History, Database, Upload, Package, Users, Inbox } from 'lucide-react'
+import { canAccessPage } from '../utils/rolePermissions'
 
 const LeftPanel = ({ workOrder, recipe, onIngredientClick, onStartScan, onStartMOScan, currentPage, onPageChange, currentUser }) => {
-  const getStatusCounts = () => {
-    if (!recipe.length) return { completed: 0, pending: 0, empty: 0, total: 0 }
-    
-    const completed = recipe.filter(item => item.status === 'completed').length
-    const pending = recipe.filter(item => item.status === 'pending').length
-    const empty = recipe.filter(item => item.status === 'empty').length
-    
-    return { completed, pending, empty, total: recipe.length }
-  }
+  const role = currentUser?.role
+  const isHistoryActive = currentPage === 'history' || (currentPage && currentPage.startsWith('history-detail-'))
+  const isWeighingReceiverActive = currentPage === 'weighing-receiver' || (currentPage && currentPage.startsWith('weighing-receiver-detail-'))
 
-  const statusCounts = getStatusCounts()
-
-  const getProgressPercentage = (ingredient) => {
-    if (ingredient.targetWeight === 0) return 0
-    return Math.min((ingredient.currentWeight / ingredient.targetWeight) * 100, 100)
-  }
-
-  const getIngredientStatus = (ingredient) => {
-    const progress = getProgressPercentage(ingredient)
-    if (progress >= 100) return 'completed'
-    if (ingredient.status === 'weighing') return 'active'
-    return 'pending'
-  }
-
-  // Check if user is QC
-  const isQC = currentUser && (currentUser.role === 'QC' || currentUser.role === 'qc')
-  
-  // Check if user is Admin (case-insensitive)
-  const isAdmin = currentUser && currentUser.role && currentUser.role.toLowerCase() === 'admin'
-
-  // Selalu tampilkan navigation tipis
   return (
     <div className="left-panel-thin">
       <div className="navigation-thin">
-        <button 
-          className={`nav-item-thin ${currentPage === 'home' ? 'active' : ''}`}
-          onClick={() => onPageChange('home')}
-          title="Halaman Utama"
-        >
-          <Home size={20} />
-        </button>
-        <button 
-          className={`nav-item-thin ${currentPage === 'database' ? 'active' : ''}`}
-          onClick={() => onPageChange('database')}
-          title="Database"
-        >
-          <Database size={20} />
-        </button>
-        <button 
-          className={`nav-item-thin ${currentPage === 'database-import' ? 'active' : ''}`}
-          onClick={() => onPageChange('database-import')}
-          title="Database Import"
-        >
-          <Upload size={20} />
-        </button>
-        <button 
-          className={`nav-item-thin ${currentPage === 'settings' ? 'active' : ''}`}
-          onClick={() => onPageChange('settings')}
-          title="Pengaturan"
-        >
-          <Settings size={20} />
-        </button>
-        <button 
-          className={`nav-item-thin ${currentPage === 'history' ? 'active' : ''}`}
-          onClick={() => onPageChange('history')}
-          title="History"
-        >
-          <History size={20} />
-        </button>
-        <button 
-          className={`nav-item-thin ${currentPage === 'weighing-receiver' || (currentPage && currentPage.startsWith('weighing-receiver-detail-')) ? 'active' : ''}`}
-          onClick={() => onPageChange('weighing-receiver')}
-          title="Data Penimbangan Diterima"
-        >
-          <Inbox size={20} />
-        </button>
-        {isAdmin && (
-          <button 
+        {canAccessPage(role, 'home') && (
+          <button
+            className={`nav-item-thin ${currentPage === 'home' ? 'active' : ''}`}
+            onClick={() => onPageChange('home')}
+            title="Halaman Utama"
+          >
+            <Home size={20} />
+          </button>
+        )}
+        {canAccessPage(role, 'database') && (
+          <button
+            className={`nav-item-thin ${currentPage === 'database' ? 'active' : ''}`}
+            onClick={() => onPageChange('database')}
+            title="Database"
+          >
+            <Database size={20} />
+          </button>
+        )}
+        {canAccessPage(role, 'database-import') && (
+          <button
+            className={`nav-item-thin ${currentPage === 'database-import' ? 'active' : ''}`}
+            onClick={() => onPageChange('database-import')}
+            title="Database Import"
+          >
+            <Upload size={20} />
+          </button>
+        )}
+        {canAccessPage(role, 'settings') && (
+          <button
+            className={`nav-item-thin ${currentPage === 'settings' ? 'active' : ''}`}
+            onClick={() => onPageChange('settings')}
+            title="Pengaturan"
+          >
+            <Settings size={20} />
+          </button>
+        )}
+        {canAccessPage(role, 'history') && (
+          <button
+            className={`nav-item-thin ${isHistoryActive ? 'active' : ''}`}
+            onClick={() => onPageChange('history')}
+            title="History"
+          >
+            <History size={20} />
+          </button>
+        )}
+        {canAccessPage(role, 'weighing-receiver') && (
+          <button
+            className={`nav-item-thin ${isWeighingReceiverActive ? 'active' : ''}`}
+            onClick={() => onPageChange('weighing-receiver')}
+            title="Data Penimbangan Diterima"
+          >
+            <Inbox size={20} />
+          </button>
+        )}
+        {canAccessPage(role, 'user-management') && (
+          <button
             className={`nav-item-thin ${currentPage === 'user-management' ? 'active' : ''}`}
             onClick={() => onPageChange('user-management')}
             title="User Management"

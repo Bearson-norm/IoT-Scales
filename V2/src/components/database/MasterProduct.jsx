@@ -176,7 +176,10 @@ const MasterProduct = () => {
     if (newProduct.productCode && newProduct.productName) {
       try {
         setLoading(true)
-        const response = await apiService.createProduct(newProduct)
+        const response = await apiService.createProduct({
+          ...newProduct,
+          weighingToleranceTemplateId: null
+        })
         if (response.success) {
           await loadProducts() // Reload products from API
           setNewProduct({
@@ -217,7 +220,10 @@ const MasterProduct = () => {
     if (editingProduct && newProduct.productCode && newProduct.productName) {
       try {
         setLoading(true)
-        const response = await apiService.updateProduct(editingProduct.id, newProduct)
+        const response = await apiService.updateProduct(editingProduct.id, {
+          ...newProduct,
+          weighingToleranceTemplateId: null
+        })
         if (response.success) {
           await loadProducts() // Reload products from API
           setEditingProduct(null)

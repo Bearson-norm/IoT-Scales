@@ -1,50 +1,75 @@
-import React, { useState } from 'react'
-import { User, Lock, LogIn, Eye, EyeOff } from 'lucide-react'
-import logoImage from '../assets/logo-km.jpeg'
+import React, { useState, useEffect } from 'react'
+import { User, Lock, LogIn, Eye, EyeOff, AlertCircle, CheckCircle } from 'lucide-react'
+import useBranding from '../hooks/useBranding'
 
-// Resolve API base URL dynamically + log so kita tahu kemana request dikirim
 let API_BASE_URL = 'http://localhost:3001/api'
 const resolveApiBaseUrl = () => {
-  const log = (msg) => console.log(`[LOGIN] ${msg}`)
   try {
     if (typeof window !== 'undefined' && window.__API_BASE_URL__) {
       API_BASE_URL = window.__API_BASE_URL__
-      log(`Using window.__API_BASE_URL__: ${API_BASE_URL}`)
       return API_BASE_URL
     }
     const viteUrl = typeof import.meta !== 'undefined' && import.meta.env?.VITE_API_BASE_URL
     if (viteUrl) {
       API_BASE_URL = viteUrl
-      log(`Using VITE_API_BASE_URL: ${API_BASE_URL}`)
       return API_BASE_URL
     }
-
     if (typeof window !== 'undefined') {
       const { protocol, hostname, port, origin } = window.location
       if (port && port !== '3001') {
         API_BASE_URL = `${protocol}//${hostname}:3001/api`
-        log(`Using port 3001 fallback: ${API_BASE_URL}`)
         return API_BASE_URL
       }
       API_BASE_URL = `${origin}/api`
-      log(`Using same-origin /api: ${API_BASE_URL}`)
       return API_BASE_URL
     }
   } catch (e) {
     console.warn('[LOGIN] resolveApiBaseUrl error:', e)
   }
-  log(`Fallback: ${API_BASE_URL}`)
   return API_BASE_URL
 }
 
 API_BASE_URL = resolveApiBaseUrl()
+const HEALTH_URL = API_BASE_URL.replace(/\/api\/?$/, '') + '/api/health'
 
 const Login = ({ onLogin }) => {
+  const { logoSrc, companyName, appTitle } = useBranding()
   const [username, setUsername] = useState('')
   const [password, setPassword] = useState('')
   const [showPassword, setShowPassword] = useState(false)
   const [isLoading, setIsLoading] = useState(false)
   const [error, setError] = useState('')
+  const [serverStatus, setServerStatus] = useState({ checking: true, ok: false, message: '' })
+
+  useEffect(() => {
+    let cancelled = false
+    const checkHealth = async () => {
+      try {
+        const resp = await fetch(HEALTH_URL)
+        const data = await resp.json()
+        if (cancelled) return
+        if (resp.ok && data.success) {
+          setServerStatus({ checking: false, ok: true, message: 'Server dan database siap.' })
+        } else {
+          setServerStatus({
+            checking: false,
+            ok: false,
+            message: data.message || 'Database belum diinisialisasi. Jalankan setup-database.bat.'
+          })
+        }
+      } catch (e) {
+        if (!cancelled) {
+          setServerStatus({
+            checking: false,
+            ok: false,
+            message: 'Server tidak merespons. Jalankan start-server.bat atau npm run dev:full.'
+          })
+        }
+      }
+    }
+    checkHealth()
+    return () => { cancelled = true }
+  }, [])
 
   const handleSubmit = async (e) => {
     e.preventDefault()
@@ -52,7 +77,6 @@ const Login = ({ onLogin }) => {
     setError('')
 
     try {
-      console.log('[LOGIN] POST', `${API_BASE_URL}/auth/login`)
       const resp = await fetch(`${API_BASE_URL}/auth/login`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -67,8 +91,7 @@ const Login = ({ onLogin }) => {
         return
       }
 
-      const user = data.user
-      onLogin(user)
+      onLogin(data.user)
     } catch (err) {
       console.error('Login error:', err)
       setError('Gagal login. Periksa koneksi atau hubungi admin.')
@@ -83,12 +106,22 @@ const Login = ({ onLogin }) => {
         <div className="login-header">
           <div className="logo-section">
             <div className="logo-icon">
-              <img src={logoImage} alt="Logo" />
+              <img src={logoSrc} alt={companyName} />
             </div>
-            <h1>Kebanggaan Masyarakat Indonesia</h1>
-            <p>Manufacturing Weighing System</p>
+            <h1>{companyName}</h1>
+            <p>{appTitle || 'Manufacturing Weighing System'}</p>
           </div>
         </div>
+
+        {!serverStatus.checking && (
+          <div
+            className={serverStatus.ok ? 'alert alert-success' : 'alert alert-error'}
+            style={{ marginBottom: '16px', display: 'flex', alignItems: 'center', gap: '8px', fontSize: '13px' }}
+          >
+            {serverStatus.ok ? <CheckCircle size={16} /> : <AlertCircle size={16} />}
+            {serverStatus.message}
+          </div>
+        )}
 
         <form onSubmit={handleSubmit} className="login-form">
           <div className="form-group">
@@ -156,7 +189,7 @@ const Login = ({ onLogin }) => {
         </form>
 
         <div className="login-footer">
-          <p>v1.7.0 - Kebanggaan Masyarakat Indonesia</p>
+          <p>v1.7.0 - {companyName}</p>
         </div>
       </div>
     </div>
@@ -164,4 +197,3 @@ const Login = ({ onLogin }) => {
 }
 
 export default Login
-

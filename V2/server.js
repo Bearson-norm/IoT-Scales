@@ -8,6 +8,7 @@ const https = require('https');
 const url = require('url');
 const WebSocket = require('ws');
 const bcrypt = require('bcryptjs');
+const toleranceTemplateService = require('./server/toleranceTemplateService');
 
 // Load .env file manually (no dotenv dependency needed)
 // Searches: 1) exe directory, 2) current working directory, 3) __dirname
@@ -248,6 +249,15 @@ if (process.pkg) {
   }
 }
 
+const multer = require('multer');
+const brandingUpload = multer({
+  dest: path.join(uploadsDir, 'branding-tmp'),
+  limits: { fileSize: 2 * 1024 * 1024 } // 2 MB max for logo
+});
+if (!fs.existsSync(path.join(uploadsDir, 'branding-tmp'))) {
+  fs.mkdirSync(path.join(uploadsDir, 'branding-tmp'), { recursive: true });
+}
+
 // Verify distDir exists before continuing
 if (!fs.existsSync(distDir)) {
   const errorMsg = `❌ FATAL ERROR: Dist directory does not exist: ${distDir}\nPlease ensure the dist folder is present in the release directory.`;
@@ -290,6 +300,8 @@ app.use(express.static(distDir, {
 
 logToFile(`📁 Static files configured to serve from: ${distDir}`);
 
+app.use('/branding', express.static(getBrandingDir(), { maxAge: '1h' }));
+
 // Database connection
 // For standalone executable, default to localhost
 // For Docker, use environment variable DB_HOST=postgres
@@ -327,6 +339,9 @@ async function initializeDatabase() {
       console.warn(`   2. Or manually: psql -U postgres -d ${dbName} -f database/schema.sql`);
       return false;
     }
+
+    await applyScalingModeMigration();
+    await applyWeighingToleranceTemplateMigration();
     
     dbInitialized = true;
     return true;
@@ -1089,6 +1104,246 @@ function getConfigFilePath(filename) {
 
 const SCALE_CONFIG_FILE = getConfigFilePath('scale-config.json');
 const PRINTER_CONFIG_FILE = getConfigFilePath('printer-config.json');
+
+function getBrandingDir() {
+  const dir = getConfigFilePath('branding');
+  if (!fs.existsSync(dir)) {
+    fs.mkdirSync(dir, { recursive: true });
+  }
+  return dir;
+}
+
+const BRANDING_CONFIG_FILE = path.join(getBrandingDir(), 'branding.json');
+
+function loadBrandingConfig() {
+  const defaults = {
+    companyName: 'KMI',
+    appTitle: 'Manufacturing Weighing System',
+    logoUrl: null,
+    faviconUrl: null
+  };
+  try {
+    if (fs.existsSync(BRANDING_CONFIG_FILE)) {
+      return { ...defaults, ...JSON.parse(fs.readFileSync(BRANDING_CONFIG_FILE, 'utf8')) };
+    }
+  } catch (e) {
+    logToFile(`⚠️  Failed to load branding config: ${e.message}`);
+  }
+  const brandingDir = getBrandingDir();
+  const logoCandidates = ['logo.png', 'logo.jpg', 'logo.jpeg', 'logo.svg'];
+  for (const name of logoCandidates) {
+    if (fs.existsSync(path.join(brandingDir, name))) {
+      defaults.logoUrl = `/branding/${name}`;
+      break;
+    }
+  }
+  if (fs.existsSync(path.join(brandingDir, 'favicon.ico'))) {
+    defaults.faviconUrl = '/branding/favicon.ico';
+  }
+  return defaults;
+}
+
+function saveBrandingConfig(config) {
+  fs.writeFileSync(BRANDING_CONFIG_FILE, JSON.stringify(config, null, 2), 'utf8');
+}
+
+async function applyScalingModeMigration() {
+  try {
+    await pool.query(`
+      ALTER TABLE master_formulation
+      ADD COLUMN IF NOT EXISTS scaling_mode VARCHAR(20) NOT NULL DEFAULT 'per_1000g'
+    `);
+    await pool.query(`
+      ALTER TABLE work_orders
+      ADD COLUMN IF NOT EXISTS planned_units DECIMAL(12,3)
+    `);
+    await pool.query(`
+      UPDATE master_formulation SET scaling_mode = 'per_1000g'
+      WHERE scaling_mode IS NULL OR scaling_mode = ''
+    `);
+    const constraintCheck = await pool.query(`
+      SELECT 1 FROM pg_constraint WHERE conname = 'master_formulation_scaling_mode_check'
+    `);
+    if (constraintCheck.rows.length === 0) {
+      await pool.query(`
+        ALTER TABLE master_formulation
+        ADD CONSTRAINT master_formulation_scaling_mode_check
+        CHECK (scaling_mode IN ('per_1000g', 'per_unit'))
+      `);
+    }
+    console.log('✅ Scaling mode migration applied');
+  } catch (migrationError) {
+    console.warn('⚠️  Scaling mode migration:', migrationError.message);
+  }
+}
+
+async function applyWeighingToleranceTemplateMigration() {
+  const migrationPath = path.join(__dirname, 'database', 'migrations', 'add_weighing_tolerance_templates.sql');
+  try {
+    if (!fs.existsSync(migrationPath)) {
+      console.warn('⚠️  Weighing tolerance template migration file not found:', migrationPath);
+      return;
+    }
+    const sql = fs.readFileSync(migrationPath, 'utf8');
+    const statements = sql
+      .split(/;\s*\n/)
+      .map(s => s.replace(/^\s*--[^\n]*\n/gm, '').trim())
+      .filter(s => s.length > 0);
+    for (const statement of statements) {
+      try {
+        await pool.query(statement);
+      } catch (stmtErr) {
+        if (stmtErr.code === '42P07' || stmtErr.code === '42710') {
+          continue;
+        }
+        throw stmtErr;
+      }
+    }
+    toleranceTemplateService.invalidateToleranceTemplateCache();
+    console.log('✅ Weighing tolerance template migration applied');
+  } catch (migrationError) {
+    console.warn('⚠️  Weighing tolerance template migration:', migrationError.message);
+  }
+}
+
+async function enrichIngredientsWithTolerancePreview(pool, formulationId, rows) {
+  if (!rows || !rows.length) return rows;
+  const enriched = [];
+  for (const row of rows) {
+    const copy = { ...row };
+    const hasStored =
+      copy.tolerance_min != null &&
+      copy.tolerance_max != null &&
+      !isNaN(parseFloat(copy.tolerance_min)) &&
+      !isNaN(parseFloat(copy.tolerance_max)) &&
+      parseFloat(copy.tolerance_max) > parseFloat(copy.tolerance_min);
+
+    if (!hasStored) {
+      const targetMass = parseFloat(copy.target_mass || 0);
+      const productId = copy.product_id || null;
+      if (targetMass > 0) {
+        try {
+          const bounds = await toleranceTemplateService.resolveWeighingToleranceBounds(pool, {
+            targetMass,
+            productId,
+            formulationId
+          });
+          copy.tolerance_min = bounds.min;
+          copy.tolerance_max = bounds.max;
+          copy.tolerance_template_id = bounds.templateId;
+          copy.tolerance_is_preview = true;
+        } catch (resolveErr) {
+          copy.tolerance_min = null;
+          copy.tolerance_max = null;
+          copy.tolerance_resolve_error = resolveErr.code || resolveErr.message;
+        }
+      }
+    } else {
+      copy.tolerance_is_preview = false;
+    }
+    enriched.push(copy);
+  }
+  return enriched;
+}
+
+function normalizeImportHeaderKey(key) {
+  return String(key || '').trim().toLowerCase().replace(/\s+/g, ' ');
+}
+
+function getImportRowValue(row, ...aliases) {
+  const aliasSet = new Set(aliases.map(normalizeImportHeaderKey));
+  for (const [key, value] of Object.entries(row)) {
+    if (aliasSet.has(normalizeImportHeaderKey(key))) {
+      return value;
+    }
+  }
+  return '';
+}
+
+function detectImportCsvFormat(csvData) {
+  if (!csvData || csvData.length === 0) return 'formula_to_input';
+  const keys = Object.keys(csvData[0]).map(normalizeImportHeaderKey);
+  const isBomPerUnit = keys.some(k =>
+    k.includes('sku code') || k.includes('material code') || k.includes('use/gr')
+  );
+  return isBomPerUnit ? 'bom_per_unit' : 'formula_to_input';
+}
+
+function parseImportTargetMass(rawValue) {
+  let targetMassStr = (rawValue || '0').toString().trim();
+  targetMassStr = targetMassStr.replace(',', '.');
+  return parseFloat(targetMassStr);
+}
+
+function normalizeImportCsvRow(row, importFormat) {
+  const explicitScaling = getImportRowValue(row, 'scalingMode', 'scaling_mode');
+  let scalingMode = null;
+  if (explicitScaling) {
+    const normalized = String(explicitScaling).trim().toLowerCase();
+    if (normalized === 'per_unit' || normalized === 'unit' || normalized === 'pcs') {
+      scalingMode = 'per_unit';
+    } else if (normalized === 'per_1000g' || normalized === '1000g' || normalized === 'gram') {
+      scalingMode = 'per_1000g';
+    }
+  }
+
+  const formulationCode =
+    getImportRowValue(row, 'formulationCode', 'formulation_code', 'SKU CODE', 'sku code') || '';
+  const formulationName =
+    getImportRowValue(row, 'formulationName', 'formulation_name', 'NEW SKU NAME', 'new sku name') || '';
+  const productCode =
+    getImportRowValue(row, 'productCode', 'product_code', 'MATERIAL CODE', 'material code') || '';
+  const productName =
+    getImportRowValue(row, 'productName', 'product_name', 'COMPONENTS/ BOM LINE', 'components/bom line', 'components/ bom line') || '';
+
+  const targetMassRaw =
+    getImportRowValue(row, 'targetMass', 'target_mass', 'USE/GR', 'use/gr') || '0';
+  const targetMass = parseImportTargetMass(targetMassRaw);
+
+  if (!scalingMode) {
+    scalingMode = importFormat === 'bom_per_unit' ? 'per_unit' : 'per_1000g';
+  }
+
+  return {
+    formulationCode,
+    formulationName,
+    productCode,
+    productName,
+    targetMass,
+    scalingMode
+  };
+}
+
+function getFormulationScalingBase(scalingMode, totalMass) {
+  if (scalingMode === 'per_unit') {
+    const base = parseFloat(totalMass);
+    return base > 0 ? base : 1;
+  }
+  return 1000;
+}
+
+function computeWorkOrderScalingFactor(plannedQuantity, scalingMode, totalMass) {
+  const baseQuantity = getFormulationScalingBase(scalingMode, totalMass);
+  const qty = parseFloat(plannedQuantity);
+  if (!qty || qty <= 0) return 1;
+  return qty / baseQuantity;
+}
+
+async function recalculateFormulationTotals(formulationId) {
+  const countResult = await pool.query(
+    `SELECT COUNT(*)::int as count, COALESCE(SUM(mfi.target_mass), 0) as total
+     FROM master_formulation_ingredients mfi
+     LEFT JOIN master_product mp ON mfi.product_id = mp.id
+     WHERE mfi.formulation_id = $1
+       AND COALESCE(mfi.is_active, true) = true
+       AND COALESCE(mp.status, 'active') = 'active'`,
+    [formulationId]
+  );
+  await pool.query(
+    'UPDATE master_formulation SET total_ingredients = $1, total_mass = $2, updated_at = CURRENT_TIMESTAMP WHERE id = $3',
+    [parseInt(countResult.rows[0].count) || 0, parseFloat(countResult.rows[0].total) || 0, formulationId]
+  );
+}
 
 // Default scale configuration
 const defaultScaleConfig = {
@@ -4354,7 +4609,9 @@ function generateZPLReceipt(data) {
   };
   
   // === HEADER ===
-  addText(headerFontDots, 'LABEL PENIMBANGAN PT KMI', { spacing: lineSpacing });
+  const branding = loadBrandingConfig();
+  const labelHeader = `LABEL PENIMBANGAN ${(branding.companyName || 'KMI').toUpperCase()}`;
+  addText(headerFontDots, labelHeader, { spacing: lineSpacing });
 
   if (moNumber) {
     addText(labelFontDots, `MO: ${escapeZPL(moNumber)}`, { spacing: sectionSpacing });
@@ -4487,8 +4744,11 @@ app.post('/api/print/weighing-receipt', async (req, res) => {
             const ingredientResult = await pool.query(
               `SELECT mfi.id 
                FROM master_formulation_ingredients mfi
+               JOIN master_product mp ON mfi.product_id = mp.id
                JOIN work_orders wo ON wo.formulation_id = mfi.formulation_id
-               WHERE wo.id = $1 AND mfi.product_name = $2
+               WHERE wo.id = $1 AND mp.product_name = $2
+                 AND COALESCE(mfi.is_active, true) = true
+               ORDER BY mfi.updated_at DESC
                LIMIT 1`,
               [workOrderId, ingredientName]
             );
@@ -4588,9 +4848,12 @@ app.post('/api/print/weighing-receipt', async (req, res) => {
           `SELECT mfi.id 
            FROM master_formulation_ingredients mfi
            JOIN master_product mp ON mfi.product_id = mp.id
-           WHERE mp.product_name = $1
+           JOIN work_orders wo ON wo.formulation_id = mfi.formulation_id
+           WHERE mp.product_name = $1 AND wo.work_order_number = $2
+             AND COALESCE(mfi.is_active, true) = true
+           ORDER BY mfi.updated_at DESC
            LIMIT 1`,
-          [ingredientName]
+          [ingredientName, moNumber]
         );
         if (ingredientResult.rows.length > 0) {
           ingredientId = ingredientResult.rows[0].id;
@@ -4652,35 +4915,98 @@ app.post('/api/print/weighing-receipt', async (req, res) => {
   }
 });
 
-// Health check endpoint for Docker
+// Health check endpoint (login screen + Docker)
 app.get('/api/health', async (req, res) => {
   try {
-    // Test database connection
-    const client = await pool.connect();
-    await client.query('SELECT 1');
-    client.release();
-    
-    res.status(200).json({
-      status: 'healthy',
+    await pool.query('SELECT 1');
+    const dbReady = await initializeDatabase();
+    res.status(dbReady ? 200 : 503).json({
+      success: dbReady,
+      status: dbReady ? 'healthy' : 'degraded',
       timestamp: new Date().toISOString(),
       uptime: process.uptime(),
-      database: 'connected'
+      database: dbReady ? 'connected' : 'not_initialized',
+      message: dbReady
+        ? 'Database connection is healthy'
+        : 'Database connected but tables missing. Run setup-database.bat to initialize.',
+      setupHint: dbReady ? null : 'setup-database.bat'
     });
   } catch (error) {
     res.status(503).json({
+      success: false,
       status: 'unhealthy',
       timestamp: new Date().toISOString(),
       uptime: process.uptime(),
       database: 'disconnected',
-      error: error.message
+      error: error.message,
+      message: 'Cannot connect to PostgreSQL. Check DB service and .env settings.',
+      setupHint: 'setup-database.bat'
     });
   }
 });
 
-// Search formulations endpoint
+app.get('/api/branding', (req, res) => {
+  try {
+    res.json({ success: true, data: loadBrandingConfig() });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+app.post('/api/branding/logo', (req, res) => {
+  brandingUpload.single('logo')(req, res, (uploadErr) => {
+    if (uploadErr) {
+      const message = uploadErr.code === 'LIMIT_FILE_SIZE'
+        ? 'File terlalu besar. Maksimal 2 MB untuk logo.'
+        : uploadErr.message;
+      return res.status(400).json({ success: false, error: message });
+    }
+    try {
+      if (!req.file) {
+        return res.status(400).json({ success: false, error: 'No logo file uploaded' });
+      }
+      const ext = path.extname(req.file.originalname).toLowerCase() || '.png';
+      const allowed = ['.png', '.jpg', '.jpeg', '.svg', '.webp'];
+      if (!allowed.includes(ext)) {
+        fs.unlinkSync(req.file.path);
+        return res.status(400).json({ success: false, error: 'Invalid file type. Use PNG, JPEG, SVG, or WebP.' });
+      }
+      const brandingDir = getBrandingDir();
+      const destName = `logo${ext}`;
+      const destPath = path.join(brandingDir, destName);
+      fs.renameSync(req.file.path, destPath);
+      const config = loadBrandingConfig();
+      config.logoUrl = `/branding/${destName}`;
+      if (req.body?.companyName) config.companyName = req.body.companyName;
+      saveBrandingConfig(config);
+      res.json({ success: true, data: config, message: 'Logo updated' });
+    } catch (error) {
+      res.status(500).json({ success: false, error: error.message });
+    }
+  });
+});
+
+app.delete('/api/branding/logo', (req, res) => {
+  try {
+    const brandingDir = getBrandingDir();
+    ['logo.png', 'logo.jpg', 'logo.jpeg', 'logo.svg', 'logo.webp'].forEach((name) => {
+      const p = path.join(brandingDir, name);
+      if (fs.existsSync(p)) fs.unlinkSync(p);
+    });
+    const config = loadBrandingConfig();
+    config.logoUrl = null;
+    saveBrandingConfig(config);
+    res.json({ success: true, data: config, message: 'Logo reset to default' });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// Search formulations endpoint (active only by default)
 app.get('/api/formulations/search', async (req, res) => {
   try {
     const { q } = req.query;
+    const includeInactive = req.query.includeInactive === 'true';
     
     if (!q || q.length < 2) {
       return res.json({
@@ -4690,6 +5016,7 @@ app.get('/api/formulations/search', async (req, res) => {
       });
     }
 
+    const statusFilter = includeInactive ? '' : " AND status = 'active' ";
     const query = `
       SELECT 
         id,
@@ -4698,12 +5025,14 @@ app.get('/api/formulations/search', async (req, res) => {
         sku,
         total_mass,
         total_ingredients,
+        scaling_mode,
         status
       FROM master_formulation 
       WHERE 
-        formulation_name ILIKE $1 
+        (formulation_name ILIKE $1 
         OR formulation_code ILIKE $1
-        OR sku ILIKE $1
+        OR sku ILIKE $1)
+        ${statusFilter}
       ORDER BY formulation_name
       LIMIT 10
     `;
@@ -4730,14 +5059,23 @@ app.get('/api/formulations/:id/ingredients', async (req, res) => {
   try {
     const { id } = req.params;
     
-    // First check if there are any ingredients at all
+    // Count all rows vs active BOM lines (inactive = soft-removed from import)
     const countQuery = await pool.query(
-      'SELECT COUNT(*) as count FROM master_formulation_ingredients WHERE formulation_id = $1',
+      `SELECT 
+         COUNT(*)::int as all_rows,
+         COUNT(*) FILTER (
+           WHERE COALESCE(mfi.is_active, true) = true
+             AND COALESCE(mp.status, 'active') = 'active'
+         )::int as active_rows
+       FROM master_formulation_ingredients mfi
+       LEFT JOIN master_product mp ON mfi.product_id = mp.id
+       WHERE mfi.formulation_id = $1`,
       [id]
     );
-    const totalIngredients = parseInt(countQuery.rows[0].count) || 0;
+    const totalRows = parseInt(countQuery.rows[0].all_rows) || 0;
+    const activeRows = parseInt(countQuery.rows[0].active_rows) || 0;
     
-    console.log(`📋 Fetching ingredients for formulation ${id}, total ingredients in DB: ${totalIngredients}`);
+    console.log(`📋 Fetching ingredients for formulation ${id}, rows in DB: ${totalRows}, active BOM lines: ${activeRows}`);
     
     const query = `
       SELECT 
@@ -4769,6 +5107,8 @@ app.get('/api/formulations/:id/ingredients', async (req, res) => {
     
     console.log(`✅ Found ${result.rows.length} ingredients with product data`);
     
+    const enrichedRows = await enrichIngredientsWithTolerancePreview(pool, id, result.rows);
+    
     // Log ingredients that don't have matching products
     const missingProducts = result.rows.filter(row => !row.ingredient_code);
     if (missingProducts.length > 0) {
@@ -4780,14 +5120,15 @@ app.get('/api/formulations/:id/ingredients', async (req, res) => {
     
     // Log sample data for debugging
     if (result.rows.length > 0) {
-      console.log('📋 Sample ingredient data:', JSON.stringify(result.rows[0], null, 2));
+      console.log('📋 Sample ingredient data:', JSON.stringify(enrichedRows[0], null, 2));
     }
     
     res.json({
       success: true,
-      data: result.rows,
+      data: enrichedRows,
       count: result.rows.length,
-      totalInDB: totalIngredients,
+      totalInDB: totalRows,
+      activeBomLines: activeRows,
       missingProducts: missingProducts.length
     });
   } catch (error) {
@@ -4889,6 +5230,21 @@ app.post('/api/weighing/save-progress', async (req, res) => {
     console.log(`💾 Saving weighing progress for MO: ${moNumber}, Formulation: ${formulationId}`);
     console.log(`   Ingredients count: ${ingredients.length}`);
     console.log(`   Operator: ${operatorName || 'Unknown'} (ID: ${operatorId || 'not provided'})`);
+
+    let formulationScalingMode = 'per_1000g';
+    let formulationTotalMass = 1000;
+    try {
+      const formMeta = await pool.query(
+        'SELECT scaling_mode, total_mass FROM master_formulation WHERE id = $1',
+        [formulationId]
+      );
+      if (formMeta.rows.length > 0) {
+        formulationScalingMode = formMeta.rows[0].scaling_mode || 'per_1000g';
+        formulationTotalMass = parseFloat(formMeta.rows[0].total_mass) || (formulationScalingMode === 'per_unit' ? 1 : 1000);
+      }
+    } catch (formMetaError) {
+      console.warn('⚠️  Could not load formulation scaling metadata:', formMetaError.message);
+    }
     
     // Start transaction
     try {
@@ -4964,25 +5320,32 @@ app.post('/api/weighing/save-progress', async (req, res) => {
     // IMPORTANT: Always update planned_quantity to preserve scaling factor
     // FIX: Use parseFloat to preserve full decimal precision for quantity
     const plannedQuantity = progress?.totalQuantity ? parseFloat(progress.totalQuantity) : 1;
-    
-    console.log(`📏 Work Order Quantity: ${plannedQuantity}g (Scaling Factor: ${(plannedQuantity / 1000).toFixed(2)}x)`);
-    
+    const plannedUnits = progress?.plannedUnits != null && progress.plannedUnits !== ''
+      ? parseFloat(progress.plannedUnits)
+      : null;
+    const scalingBase = getFormulationScalingBase(formulationScalingMode, formulationTotalMass);
+    const scalingFactorLog = scalingBase > 0 ? (plannedQuantity / scalingBase).toFixed(2) : '1.00';
+
+    console.log(`📏 Work Order Quantity: ${plannedQuantity}g${plannedUnits != null ? ` (${plannedUnits} PCS)` : ''} (Scaling Factor: ${scalingFactorLog}x, mode=${formulationScalingMode})`);
+
     const workOrderQuery = `
-      INSERT INTO work_orders (work_order_number, formulation_id, planned_quantity, status, created_by, created_at)
-      VALUES ($1, $2, $3, 'in_progress', $4, CURRENT_TIMESTAMP)
+      INSERT INTO work_orders (work_order_number, formulation_id, planned_quantity, planned_units, status, created_by, created_at)
+      VALUES ($1, $2, $3, $4, 'in_progress', $5, CURRENT_TIMESTAMP)
       ON CONFLICT (work_order_number) 
       DO UPDATE SET 
         formulation_id = EXCLUDED.formulation_id,
         planned_quantity = EXCLUDED.planned_quantity,
+        planned_units = EXCLUDED.planned_units,
         status = 'in_progress',
         updated_at = CURRENT_TIMESTAMP
       RETURNING id, work_order_number
     `;
-    
+
     const workOrderResult = await pool.query(workOrderQuery, [
-      moNumber, 
-      formulationId, 
+      moNumber,
+      formulationId,
       plannedQuantity,
+      plannedUnits,
       createdBy
     ]);
     
@@ -5069,11 +5432,35 @@ app.post('/api/weighing/save-progress', async (req, res) => {
           END
       `;
       
-      // Calculate tolerance range (default ±3g)
-      // targetMass already validated above
-      const tolerance = 3; // Default tolerance in grams
-      const toleranceMin = Math.max(0, targetMass - tolerance); // Ensure non-negative
-      const toleranceMax = targetMass + tolerance;
+      // Calculate tolerance range from weighing tolerance template (by target qty band)
+      let toleranceMin = null;
+      let toleranceMax = null;
+      try {
+        const productId =
+          ingredient.productId ||
+          ingredient.product_id ||
+          (await toleranceTemplateService.getProductIdForFormulationIngredient(pool, ingredient.id));
+        const bounds = await toleranceTemplateService.resolveWeighingToleranceBounds(pool, {
+          targetMass,
+          productId,
+          formulationId
+        });
+        toleranceMin = bounds.min;
+        toleranceMax = bounds.max;
+      } catch (tolErr) {
+        console.error(`❌ Tolerance resolve failed for ingredient ${ingredient.id}:`, tolErr.message);
+        if (transactionStarted) {
+          await pool.query('ROLLBACK');
+        }
+        return res.status(400).json({
+          success: false,
+          error: tolErr.code || 'TOLERANCE_RESOLVE_FAILED',
+          message: 'Tidak ada band toleransi untuk target timbang bahan ini. Periksa template toleransi penimbangan.',
+          details: tolErr.message,
+          ingredientId: ingredient.id,
+          targetMass
+        });
+      }
       
       try {
         // Get existing actual_mass and tolerance values from database (if exists)
@@ -5085,6 +5472,30 @@ app.post('/api/weighing/save-progress', async (req, res) => {
         const existingMass = existingCheck.rows.length > 0 
           ? parseFloat(existingCheck.rows[0].actual_mass || 0) 
           : 0;
+
+        // A reopened screen that did not load the running work order sends savedWeight 0
+        // and a full new reading. Adding that reading would double-count the same MO.
+        const clientSavedRaw = ingredient.savedWeight != null
+          ? ingredient.savedWeight
+          : ingredient.saved_weight;
+        const hasClientSaved = clientSavedRaw != null && clientSavedRaw !== '';
+        const clientSaved = hasClientSaved ? (parseFloat(clientSavedRaw) || 0) : null;
+        if (hasClientSaved && existingMass > clientSaved + 0.2) {
+          console.warn(`⚠️ Stale progress for ingredient ${ingredient.id}: client saved=${clientSaved}g, database=${existingMass}g`);
+          if (transactionStarted) {
+            await pool.query('ROLLBACK');
+            transactionStarted = false;
+          }
+          return res.status(409).json({
+            success: false,
+            error: 'STALE_PROGRESS',
+            message: 'Work order ini masih berjalan dan progress di layar belum memuat timbangan yang sudah tersimpan.',
+            details: `Bahan sudah tersimpan ${existingMass}g, layar hanya mengenal ${clientSaved}g. Buka ulang nomor MO yang sama untuk melanjutkan.`,
+            existingMass,
+            clientSavedMass: clientSaved,
+            moNumber
+          });
+        }
         
         // Use tolerance values from database if available, otherwise use calculated values
         const dbToleranceMin = existingCheck.rows.length > 0 && existingCheck.rows[0].tolerance_min !== null
@@ -5286,8 +5697,8 @@ app.post('/api/weighing/save-progress', async (req, res) => {
               newMass, // Actual mass for this session (new reading)
               accumulatedMass, // Total accumulated mass
               sessionStatus, // Use valid session status
-              toleranceMin,
-              toleranceMax,
+              finalToleranceMin,
+              finalToleranceMax,
               weighedByUserId,
               sessionNotes // Store exp_date in notes as JSON
             ]);
@@ -5323,12 +5734,14 @@ app.post('/api/weighing/save-progress', async (req, res) => {
     let completedIngredients = 0;
     
     if (!hasToleranceViolation) {
-      // Get total ingredients from formulation (not from weighing_progress)
-      // This ensures we check against ALL ingredients in the formulation, not just those that have been saved
+      // Get total ingredients from current active BOM only (excludes soft-deactivated lines from import)
       const formulationIngredientsCheck = await pool.query(
-        `SELECT COUNT(*) as total
-         FROM master_formulation_ingredients 
-         WHERE formulation_id = $1`,
+        `SELECT COUNT(*)::int as total
+         FROM master_formulation_ingredients mfi
+         LEFT JOIN master_product mp ON mfi.product_id = mp.id
+         WHERE mfi.formulation_id = $1
+           AND COALESCE(mfi.is_active, true) = true
+           AND COALESCE(mp.status, 'active') = 'active'`,
         [formulationId]
       );
       
@@ -5458,23 +5871,29 @@ app.post('/api/weighing/save-progress', async (req, res) => {
           accumulatedMass = currentReading;
         }
         
-        // Get planned quantity from database or use default
-        let plannedQuantity = 1000; // Default
+        // Get planned quantity and formulation scaling from database
+        let plannedQuantity = 1000;
+        let scalingMode = 'per_1000g';
+        let formulationTotalMass = 1000;
         try {
           const pqResult = await pool.query(
-            'SELECT planned_quantity FROM work_orders WHERE id = $1',
+            `SELECT wo.planned_quantity, mf.scaling_mode, mf.total_mass
+             FROM work_orders wo
+             LEFT JOIN master_formulation mf ON wo.formulation_id = mf.id
+             WHERE wo.id = $1`,
             [workOrderId]
           );
           if (pqResult.rows.length > 0) {
             plannedQuantity = parseFloat(pqResult.rows[0].planned_quantity || 1000);
+            scalingMode = pqResult.rows[0].scaling_mode || 'per_1000g';
+            formulationTotalMass = parseFloat(pqResult.rows[0].total_mass) || (scalingMode === 'per_unit' ? 1 : 1000);
           }
         } catch (pqError) {
-          console.warn('⚠️ Could not fetch planned_quantity, using default 1000:', pqError.message);
+          console.warn('⚠️ Could not fetch planned_quantity/scaling, using defaults:', pqError.message);
         }
-        
-        // FIX: Preserve full decimal precision for scaling factor calculations
-        // Only use toFixed() for display purposes, not for calculations
-        const scalingFactor = plannedQuantity / 1000;
+
+        const scalingBase = getFormulationScalingBase(scalingMode, formulationTotalMass);
+        const scalingFactor = scalingBase > 0 ? plannedQuantity / scalingBase : 1;
         const remainingWeight = Math.max(0, targetMass - accumulatedMass);
         
         // Get formulation name and ingredient name
@@ -6292,6 +6711,11 @@ app.get('/api/history', async (req, res) => {
           JOIN master_formulation_ingredients mfi ON wp.ingredient_id = mfi.id
           JOIN master_product mp ON mfi.product_id = mp.id
           WHERE wp.work_order_id = $1
+            AND (
+              COALESCE(mfi.is_active, true) = true
+              OR COALESCE(wp.actual_mass, 0) > 0
+              OR wp.status IN ('weighing', 'completed', 'failed')
+            )
           ORDER BY COALESCE(mfi.sequence_order, 999999), mfi.created_at ASC
         `;
         
@@ -6357,27 +6781,6 @@ app.get('/api/history', async (req, res) => {
               excess_amount: excessAmount,
               violation_count: violatingIngredients.length
             };
-          } else {
-            // If no ingredient exceeds tolerance_max, check if any ingredient is significantly over
-            const overTarget = weighingDetails.filter(ing => {
-              const actualMass = ing.weighing_result || 0;
-              const targetMass = ing.target_mass || 0;
-              return actualMass > targetMass + 3; // More than tolerance (3g)
-            });
-            
-            if (overTarget.length > 0) {
-              const firstOver = overTarget[0];
-              rejectReason = {
-                ingredient_id: firstOver.ingredient_id, // Add ingredient_id for frontend matching
-                ingredient_name: firstOver.ingredient_name,
-                ingredient_code: firstOver.ingredient_code,
-                target_mass: firstOver.target_mass,
-                actual_mass: firstOver.weighing_result,
-                tolerance_max: firstOver.tolerance_max,
-                excess_amount: (firstOver.weighing_result || 0) - (firstOver.tolerance_max || 0),
-                violation_count: overTarget.length
-              };
-            }
           }
         }
         
@@ -6524,12 +6927,15 @@ app.get('/api/history/:mo', async (req, res) => {
         wo.work_order_number as work_order,
         wo.formulation_id,
         wo.planned_quantity,
+        wo.planned_units,
         wo.status,
         wo.created_at as production_date,
         wo.completed_at as end_time,
         wo.opened_at,
         COALESCE(mf.formulation_name, 'Unknown') as formulation_name,
         COALESCE(mf.formulation_code, '') as sku,
+        COALESCE(mf.scaling_mode, 'per_1000g') as scaling_mode,
+        COALESCE(mf.total_mass, 1000) as formulation_total_mass,
         COALESCE(mu.username, mu.name, 'Unknown') as operator_name,
         mu.name as operator_full_name
       FROM work_orders wo
@@ -6542,12 +6948,15 @@ app.get('/api/history/:mo', async (req, res) => {
         wo.work_order_number as work_order,
         wo.formulation_id,
         wo.planned_quantity,
+        wo.planned_units,
         wo.status,
         wo.created_at as production_date,
         wo.completed_at as end_time,
         NULL as opened_at,
         COALESCE(mf.formulation_name, 'Unknown') as formulation_name,
         COALESCE(mf.formulation_code, '') as sku,
+        COALESCE(mf.scaling_mode, 'per_1000g') as scaling_mode,
+        COALESCE(mf.total_mass, 1000) as formulation_total_mass,
         COALESCE(mu.username, mu.name, 'Unknown') as operator_name,
         mu.name as operator_full_name
       FROM work_orders wo
@@ -6581,14 +6990,16 @@ app.get('/api/history/:mo', async (req, res) => {
       }
     }
     
-    // Fetch ALL ingredients from formulation (not just those with sessions)
-    // This ensures all ingredients appear in history detail, even if not yet weighed
-    const baseQuantity = 1000; // Base formula quantity
-    const scalingFactor = wo.planned_quantity ? (wo.planned_quantity / baseQuantity) : 1;
+    // History detail: current active BOM + inactive lines only if this MO has real weighing data on them
+    // (matches live WO / import soft-delete — avoids ghost SKUs removed by CSV import)
+    const historyScalingMode = wo.scaling_mode || 'per_1000g';
+    const baseQuantity = getFormulationScalingBase(historyScalingMode, wo.formulation_total_mass);
+    const scalingFactor = computeWorkOrderScalingFactor(wo.planned_quantity, historyScalingMode, wo.formulation_total_mass);
     
     const allIngredientsQuery = `
       SELECT 
         mfi.id as ingredient_id,
+        COALESCE(mfi.is_active, true) as bom_is_active,
         mp.product_code,
         mp.product_name as ingredient_name,
         -- Use scaled target_mass from weighing_progress if exists, otherwise calculate from base
@@ -6602,8 +7013,22 @@ app.get('/api/history/:mo', async (req, res) => {
       JOIN master_product mp ON mfi.product_id = mp.id
       LEFT JOIN weighing_progress wp ON wp.work_order_id = $1 AND wp.ingredient_id = mfi.id
       WHERE mfi.formulation_id = $2
-        -- For existing WO: include all ingredients (active and inactive) to preserve history
-        -- This allows viewing complete history even if ingredients were deactivated
+        AND (
+          (COALESCE(mfi.is_active, true) = true AND COALESCE(mp.status, 'active') = 'active')
+          OR EXISTS (
+            SELECT 1 FROM weighing_progress wp_keep
+            WHERE wp_keep.work_order_id = $1
+              AND wp_keep.ingredient_id = mfi.id
+              AND (
+                COALESCE(wp_keep.actual_mass, 0) > 0
+                OR wp_keep.status IN ('weighing', 'completed', 'failed')
+              )
+          )
+          OR EXISTS (
+            SELECT 1 FROM weighing_sessions ws_keep
+            WHERE ws_keep.work_order_id = $1 AND ws_keep.ingredient_id = mfi.id
+          )
+        )
       ORDER BY COALESCE(mfi.sequence_order, 999999), mfi.created_at ASC
     `;
     
@@ -6803,12 +7228,15 @@ app.get('/api/work-orders/:mo', async (req, res) => {
          wo.id, 
          wo.work_order_number, 
          wo.formulation_id, 
-         wo.planned_quantity, 
+         wo.planned_quantity,
+         wo.planned_units,
          wo.status, 
          wo.created_at, 
          wo.completed_at,
          mf.formulation_code,
-         mf.formulation_name
+         mf.formulation_name,
+         mf.scaling_mode,
+         mf.total_mass as formulation_total_mass
        FROM work_orders wo
        LEFT JOIN master_formulation mf ON wo.formulation_id = mf.id
        WHERE wo.work_order_number = $1`,
@@ -6837,12 +7265,14 @@ app.get('/api/work-orders/:mo', async (req, res) => {
     // CRITICAL FIX: Calculate scaled target_mass for ALL ingredients (including those not yet saved)
     // For ingredients not yet saved: calculate from base * scaling factor
     // For ingredients already saved: use scaled target_mass from weighing_progress
-    const baseQuantity = 1000; // Base formula quantity
-    const scalingFactor = wo.planned_quantity ? (wo.planned_quantity / baseQuantity) : 1;
+    const scalingMode = wo.scaling_mode || 'per_1000g';
+    const baseQuantity = getFormulationScalingBase(scalingMode, wo.formulation_total_mass);
+    const scalingFactor = computeWorkOrderScalingFactor(wo.planned_quantity, scalingMode, wo.formulation_total_mass);
     
     const ingResult = await pool.query(
       `SELECT 
          mfi.id as ingredient_id,
+         mfi.product_id,
          mfi.target_mass as base_target_mass,
          -- CRITICAL FIX: Use scaled target_mass from weighing_progress if exists
          -- Otherwise, calculate scaled target from base * scaling factor
@@ -6887,19 +7317,45 @@ app.get('/api/work-orders/:mo', async (req, res) => {
       JOIN master_product mp ON mfi.product_id = mp.id
       LEFT JOIN weighing_progress wp ON wp.work_order_id = $1 AND wp.ingredient_id = mfi.id
       WHERE mfi.formulation_id = $2
-        -- For existing WO: include all ingredients (active and inactive) to preserve history
-        -- This allows viewing complete history even if ingredients were deactivated
+        AND (
+          (COALESCE(mfi.is_active, true) = true AND COALESCE(mp.status, 'active') = 'active')
+          OR EXISTS (
+            SELECT 1 FROM weighing_progress wp_keep
+            WHERE wp_keep.work_order_id = $1
+              AND wp_keep.ingredient_id = mfi.id
+              AND (
+                COALESCE(wp_keep.actual_mass, 0) > 0
+                OR wp_keep.status IN ('weighing', 'completed', 'failed')
+              )
+          )
+        )
       ORDER BY COALESCE(mfi.sequence_order, 999999), mfi.created_at ASC`,
       [wo.id, wo.formulation_id]
     );
     
-    const scalingFactorDisplay = wo.planned_quantity ? (wo.planned_quantity / 1000).toFixed(2) : '1.00';
-    console.log(`📊 Loaded work order ${mo} with ${ingResult.rows.length} ingredients (Quantity: ${wo.planned_quantity || 1000}g, Scaling: ${scalingFactorDisplay}x)`);
+    const scalingFactorDisplay = baseQuantity > 0
+      ? (parseFloat(wo.planned_quantity || 0) / baseQuantity).toFixed(2)
+      : '1.00';
+    const qtyLabel = scalingMode === 'per_unit' && wo.planned_units
+      ? `${wo.planned_units} PCS (${wo.planned_quantity || 0}g total)`
+      : `${wo.planned_quantity || baseQuantity}g`;
+    console.log(`📊 Loaded work order ${mo} with ${ingResult.rows.length} ingredients (Quantity: ${qtyLabel}, Scaling: ${scalingFactorDisplay}x, mode=${scalingMode})`);
     ingResult.rows.forEach(ing => {
       console.log(`   - ${ing.product_name}: ${ing.actual_mass}g / ${ing.target_mass}g (${ing.progress_percentage}%), Status: ${ing.status} (Base: ${ing.base_target_mass || 'N/A'}g)`);
     });
-    
-    res.json({ success: true, data: { workOrder: wo, ingredients: ingResult.rows } });
+    const enrichedIngredients = await enrichIngredientsWithTolerancePreview(pool, wo.formulation_id, ingResult.rows);
+    res.json({
+      success: true,
+      data: {
+        workOrder: {
+          ...wo,
+          scaling_mode: scalingMode,
+          base_quantity: baseQuantity,
+          scaling_factor: scalingFactor
+        },
+        ingredients: enrichedIngredients
+      }
+    });
   } catch (error) {
     console.error('Error fetching work order detail:', error);
     res.status(500).json({ success: false, error: 'Failed to fetch work order', details: error.message });
@@ -6968,9 +7424,10 @@ app.post('/api/work-orders/:mo/reactivate', async (req, res) => {
       `SELECT id, ingredient_id, actual_mass, tolerance_max, target_mass
        FROM weighing_progress
        WHERE work_order_id = $1
-         AND tolerance_max IS NOT NULL
-         AND actual_mass > tolerance_max
-         AND status != 'completed'`,
+         AND status != 'completed'
+         AND (
+           tolerance_max IS NOT NULL AND actual_mass > tolerance_max
+         )`,
       [workOrder.id]
     );
 
@@ -7017,18 +7474,26 @@ app.post('/api/work-orders/:mo/reactivate', async (req, res) => {
     }
     
     const totalIngredientsResult = await pool.query(
-      `SELECT COUNT(*) as total
-       FROM master_formulation_ingredients 
-       WHERE formulation_id = $1`,
+      `SELECT COUNT(*)::int as total
+       FROM master_formulation_ingredients mfi
+       LEFT JOIN master_product mp ON mfi.product_id = mp.id
+       WHERE mfi.formulation_id = $1
+         AND COALESCE(mfi.is_active, true) = true
+         AND COALESCE(mp.status, 'active') = 'active'`,
       [workOrder.formulation_id]
     );
     
     const totalIngredients = parseInt(totalIngredientsResult.rows[0]?.total || 0);
     
     const completedIngredientsResult = await pool.query(
-      `SELECT COUNT(*) as completed_count
-       FROM weighing_progress 
-       WHERE work_order_id = $1 AND status = 'completed'`,
+      `SELECT COUNT(*)::int as completed_count
+       FROM weighing_progress wp
+       JOIN master_formulation_ingredients mfi ON wp.ingredient_id = mfi.id
+       LEFT JOIN master_product mp ON mfi.product_id = mp.id
+       WHERE wp.work_order_id = $1
+         AND wp.status = 'completed'
+         AND COALESCE(mfi.is_active, true) = true
+         AND COALESCE(mp.status, 'active') = 'active'`,
       [workOrder.id]
     );
     
@@ -7199,6 +7664,7 @@ app.get('/api/products', async (req, res) => {
         mp.product_category,
         mp.type_tolerance,
         mp.tolerance_grouping_id,
+        mp.weighing_tolerance_template_id,
         mp.status,
         mp.created_at,
         mp.updated_at,
@@ -7262,9 +7728,11 @@ app.get('/api/ingredients', async (req, res) => {
   }
 });
 
-// Get all formulations
+// Get all formulations (active only by default; ?includeInactive=true for admin)
 app.get('/api/formulations', async (req, res) => {
   try {
+    const includeInactive = req.query.includeInactive === 'true';
+    const statusFilter = includeInactive ? '' : " WHERE mf.status = 'active' ";
     const query = `
       SELECT 
         mf.id,
@@ -7274,9 +7742,11 @@ app.get('/api/formulations', async (req, res) => {
         mf.total_mass,
         mf.total_ingredients,
         mf.status,
+        mf.weighing_tolerance_template_id,
         mf.created_at,
         mf.updated_at
       FROM master_formulation mf
+      ${statusFilter}
       ORDER BY mf.formulation_name
     `;
     
@@ -7293,6 +7763,218 @@ app.get('/api/formulations', async (req, res) => {
       error: 'Failed to fetch formulations',
       details: error.message
     });
+  }
+});
+
+
+// =============================================
+// Weighing tolerance templates (target qty bands)
+// =============================================
+
+app.get('/api/weighing-tolerance-templates', async (req, res) => {
+  try {
+    const result = await pool.query(
+      `SELECT t.*,
+        (SELECT COUNT(*)::int FROM weighing_tolerance_template_band b WHERE b.template_id = t.id) as band_count
+       FROM weighing_tolerance_template t
+       ORDER BY t.is_default DESC, t.name ASC`
+    );
+    res.json({ success: true, data: result.rows, count: result.rows.length });
+  } catch (error) {
+    console.error('Error fetching weighing tolerance templates:', error);
+    res.status(500).json({ success: false, error: 'Failed to fetch templates', details: error.message });
+  }
+});
+
+app.get('/api/weighing-tolerance-templates/resolve', async (req, res) => {
+  try {
+    const targetMass = parseFloat(req.query.targetMass);
+    const productId = req.query.productId || null;
+    const formulationId = req.query.formulationId || null;
+    if (!targetMass || targetMass <= 0) {
+      return res.status(400).json({ success: false, error: 'targetMass is required and must be > 0' });
+    }
+    const bounds = await toleranceTemplateService.resolveWeighingToleranceBounds(pool, {
+      targetMass,
+      productId,
+      formulationId
+    });
+    res.json({ success: true, data: bounds });
+  } catch (error) {
+    const status = error.code === 'NO_TOLERANCE_BAND' || error.code === 'NO_TOLERANCE_TEMPLATE' ? 400 : 500;
+    res.status(status).json({
+      success: false,
+      error: error.code || 'TOLERANCE_RESOLVE_FAILED',
+      details: error.message
+    });
+  }
+});
+
+app.post('/api/weighing-tolerance-templates/resolve-batch', async (req, res) => {
+  try {
+    const { formulationId, items } = req.body || {};
+    if (!Array.isArray(items) || items.length === 0) {
+      return res.status(400).json({ success: false, error: 'items array is required' });
+    }
+    const results = [];
+    for (const item of items) {
+      const targetMass = parseFloat(item.targetMass ?? item.target_mass);
+      const productId = item.productId ?? item.product_id ?? null;
+      try {
+        const bounds = await toleranceTemplateService.resolveWeighingToleranceBounds(pool, {
+          targetMass,
+          productId,
+          formulationId
+        });
+        results.push({
+          key: item.key ?? item.formulation_ingredient_id ?? item.id,
+          productId,
+          targetMass,
+          tolerance_min: bounds.min,
+          tolerance_max: bounds.max,
+          templateId: bounds.templateId,
+          toleranceQty: bounds.toleranceQty
+        });
+      } catch (err) {
+        results.push({
+          key: item.key ?? item.formulation_ingredient_id ?? item.id,
+          productId,
+          targetMass,
+          error: err.code || err.message
+        });
+      }
+    }
+    res.json({ success: true, data: results });
+  } catch (error) {
+    res.status(500).json({ success: false, error: 'Batch resolve failed', details: error.message });
+  }
+});
+
+app.get('/api/weighing-tolerance-templates/:id/bands', async (req, res) => {
+  try {
+    const bands = await toleranceTemplateService.getBandsForTemplate(pool, req.params.id);
+    res.json({ success: true, data: bands, count: bands.length });
+  } catch (error) {
+    res.status(500).json({ success: false, error: 'Failed to fetch bands', details: error.message });
+  }
+});
+
+app.put('/api/weighing-tolerance-templates/:id/bands', async (req, res) => {
+  const templateId = req.params.id;
+  const { bands } = req.body || {};
+  try {
+    const validation = toleranceTemplateService.validateBandPayload(bands);
+    if (!validation.valid) {
+      return res.status(400).json({ success: false, error: validation.error });
+    }
+    await pool.query('BEGIN');
+    await pool.query('DELETE FROM weighing_tolerance_template_band WHERE template_id = $1', [templateId]);
+    const normalized = (bands || []).map(b => toleranceTemplateService.mapBandInput(b));
+    for (let i = 0; i < normalized.length; i++) {
+      const b = normalized[i];
+      await pool.query(
+        `INSERT INTO weighing_tolerance_template_band
+         (template_id, target_qty_min, target_qty_max, tolerance_qty, sort_order)
+         VALUES ($1, $2, $3, $4, $5)`,
+        [templateId, b.target_qty_min, b.target_qty_max, b.tolerance_qty, b.sort_order || i + 1]
+      );
+    }
+    await pool.query('COMMIT');
+    toleranceTemplateService.invalidateToleranceTemplateCache();
+    const saved = await toleranceTemplateService.getBandsForTemplate(pool, templateId);
+    res.json({ success: true, data: saved, message: 'Bands updated' });
+  } catch (error) {
+    await pool.query('ROLLBACK').catch(() => {});
+    res.status(500).json({ success: false, error: 'Failed to update bands', details: error.message });
+  }
+});
+
+app.post('/api/weighing-tolerance-templates', async (req, res) => {
+  try {
+    const { code, name, description, status } = req.body || {};
+    if (!code || !name) {
+      return res.status(400).json({ success: false, error: 'code and name are required' });
+    }
+    const result = await pool.query(
+      `INSERT INTO weighing_tolerance_template (code, name, description, status, is_default)
+       VALUES ($1, $2, $3, COALESCE($4, 'active'), false)
+       RETURNING *`,
+      [code, name, description || null, status]
+    );
+    toleranceTemplateService.invalidateToleranceTemplateCache();
+    res.json({ success: true, data: result.rows[0] });
+  } catch (error) {
+    res.status(500).json({ success: false, error: 'Failed to create template', details: error.message });
+  }
+});
+
+app.put('/api/weighing-tolerance-templates/:id', async (req, res) => {
+  try {
+    const { code, name, description, status } = req.body || {};
+    const result = await pool.query(
+      `UPDATE weighing_tolerance_template
+       SET code = COALESCE($1, code),
+           name = COALESCE($2, name),
+           description = COALESCE($3, description),
+           status = COALESCE($4, status),
+           updated_at = CURRENT_TIMESTAMP
+       WHERE id = $5
+       RETURNING *`,
+      [code, name, description, status, req.params.id]
+    );
+    if (!result.rows.length) {
+      return res.status(404).json({ success: false, error: 'Template not found' });
+    }
+    toleranceTemplateService.invalidateToleranceTemplateCache();
+    res.json({ success: true, data: result.rows[0] });
+  } catch (error) {
+    res.status(500).json({ success: false, error: 'Failed to update template', details: error.message });
+  }
+});
+
+app.put('/api/weighing-tolerance-templates/:id/set-default', async (req, res) => {
+  try {
+    await pool.query('BEGIN');
+    await pool.query(
+      `UPDATE weighing_tolerance_template SET is_default = false WHERE is_default = true`
+    );
+    const result = await pool.query(
+      `UPDATE weighing_tolerance_template
+       SET is_default = true, status = 'active', updated_at = CURRENT_TIMESTAMP
+       WHERE id = $1
+       RETURNING *`,
+      [req.params.id]
+    );
+    if (!result.rows.length) {
+      await pool.query('ROLLBACK');
+      return res.status(404).json({ success: false, error: 'Template not found' });
+    }
+    await pool.query('COMMIT');
+    toleranceTemplateService.invalidateToleranceTemplateCache();
+    res.json({ success: true, data: result.rows[0], message: 'Default template updated' });
+  } catch (error) {
+    await pool.query('ROLLBACK').catch(() => {});
+    res.status(500).json({ success: false, error: 'Failed to set default template', details: error.message });
+  }
+});
+
+app.delete('/api/weighing-tolerance-templates/:id', async (req, res) => {
+  try {
+    const check = await pool.query(
+      'SELECT is_default FROM weighing_tolerance_template WHERE id = $1',
+      [req.params.id]
+    );
+    if (!check.rows.length) {
+      return res.status(404).json({ success: false, error: 'Template not found' });
+    }
+    if (check.rows[0].is_default) {
+      return res.status(400).json({ success: false, error: 'Cannot delete the default template. Set another default first.' });
+    }
+    await pool.query('DELETE FROM weighing_tolerance_template WHERE id = $1', [req.params.id]);
+    toleranceTemplateService.invalidateToleranceTemplateCache();
+    res.json({ success: true, message: 'Template deleted' });
+  } catch (error) {
+    res.status(500).json({ success: false, error: 'Failed to delete template', details: error.message });
   }
 });
 
@@ -7335,15 +8017,15 @@ app.get('/api/tolerance-groupings', async (req, res) => {
 // Create new product
 app.post('/api/products', async (req, res) => {
   try {
-    const { productCode, productName, productCategory, typeTolerance, toleranceGroupingId, status } = req.body;
+    const { productCode, productName, productCategory, typeTolerance, toleranceGroupingId, weighingToleranceTemplateId, status } = req.body;
     
     const query = `
-      INSERT INTO master_product (product_code, product_name, product_category, type_tolerance, tolerance_grouping_id, status)
-      VALUES ($1, $2, $3, $4, $5, $6)
+      INSERT INTO master_product (product_code, product_name, product_category, type_tolerance, tolerance_grouping_id, weighing_tolerance_template_id, status)
+      VALUES ($1, $2, $3, $4, $5, $6, $7)
       RETURNING *
     `;
     
-    const result = await pool.query(query, [productCode, productName, productCategory, typeTolerance, toleranceGroupingId, status]);
+    const result = await pool.query(query, [productCode, productName, productCategory, typeTolerance, toleranceGroupingId, weighingToleranceTemplateId || null, status]);
     
     res.json({
       success: true,
@@ -7364,16 +8046,16 @@ app.post('/api/products', async (req, res) => {
 app.put('/api/products/:id', async (req, res) => {
   try {
     const productId = req.params.id;
-    const { productCode, productName, productCategory, typeTolerance, toleranceGroupingId, status } = req.body;
+    const { productCode, productName, productCategory, typeTolerance, toleranceGroupingId, weighingToleranceTemplateId, status } = req.body;
     
     const query = `
       UPDATE master_product 
-      SET product_code = $1, product_name = $2, product_category = $3, type_tolerance = $4, tolerance_grouping_id = $5, status = $6, updated_at = CURRENT_TIMESTAMP
-      WHERE id = $7
+      SET product_code = $1, product_name = $2, product_category = $3, type_tolerance = $4, tolerance_grouping_id = $5, weighing_tolerance_template_id = $6, status = $7, updated_at = CURRENT_TIMESTAMP
+      WHERE id = $8
       RETURNING *
     `;
     
-    const result = await pool.query(query, [productCode, productName, productCategory, typeTolerance, toleranceGroupingId, status, productId]);
+    const result = await pool.query(query, [productCode, productName, productCategory, typeTolerance, toleranceGroupingId, weighingToleranceTemplateId || null, status, productId]);
     
     if (result.rows.length === 0) {
       return res.status(404).json({
@@ -7471,16 +8153,18 @@ app.post('/api/formulations', async (req, res) => {
 app.put('/api/formulations/:id', async (req, res) => {
   try {
     const formulationId = req.params.id;
-    const { formulationCode, formulationName, sku, totalMass, totalIngredients, status } = req.body;
+    const { formulationCode, formulationName, sku, totalMass, totalIngredients, status, weighingToleranceTemplateId } = req.body;
     
     const query = `
       UPDATE master_formulation 
-      SET formulation_code = $1, formulation_name = $2, sku = $3, total_mass = $4, total_ingredients = $5, status = $6, updated_at = CURRENT_TIMESTAMP
-      WHERE id = $7
+      SET formulation_code = $1, formulation_name = $2, sku = $3, total_mass = $4, total_ingredients = $5, status = $6,
+          weighing_tolerance_template_id = $7,
+          updated_at = CURRENT_TIMESTAMP
+      WHERE id = $8
       RETURNING *
     `;
     
-    const result = await pool.query(query, [formulationCode, formulationName, sku, totalMass, totalIngredients, status, formulationId]);
+    const result = await pool.query(query, [formulationCode, formulationName, sku, totalMass, totalIngredients, status, weighingToleranceTemplateId || null, formulationId]);
     
     if (result.rows.length === 0) {
       return res.status(404).json({
@@ -7653,6 +8337,122 @@ app.delete('/api/ingredients/:id', async (req, res) => {
   }
 });
 
+// Formulation BOM line CRUD (master_formulation_ingredients)
+app.post('/api/formulations/:id/ingredients', async (req, res) => {
+  try {
+    const formulationId = req.params.id;
+    const { productId, targetMass, sequenceOrder } = req.body;
+    if (!productId || !targetMass || parseFloat(targetMass) <= 0) {
+      return res.status(400).json({ success: false, error: 'productId and targetMass are required' });
+    }
+    const seq = sequenceOrder != null ? parseInt(sequenceOrder) : null;
+    let sequenceVal = seq;
+    if (sequenceVal == null || isNaN(sequenceVal)) {
+      const maxSeq = await pool.query(
+        'SELECT COALESCE(MAX(sequence_order), 0) + 1 as next_seq FROM master_formulation_ingredients WHERE formulation_id = $1',
+        [formulationId]
+      );
+      sequenceVal = parseInt(maxSeq.rows[0].next_seq) || 1;
+    }
+    const result = await pool.query(
+      `INSERT INTO master_formulation_ingredients (formulation_id, product_id, target_mass, sequence_order, is_active)
+       VALUES ($1, $2, $3, $4, true)
+       ON CONFLICT (formulation_id, product_id) DO UPDATE
+         SET target_mass = EXCLUDED.target_mass, sequence_order = EXCLUDED.sequence_order,
+             is_active = true, updated_at = CURRENT_TIMESTAMP
+       RETURNING *`,
+      [formulationId, productId, parseFloat(targetMass), sequenceVal]
+    );
+    await recalculateFormulationTotals(formulationId);
+    res.json({ success: true, data: result.rows[0], message: 'Ingredient added' });
+  } catch (error) {
+    console.error('Error adding formulation ingredient:', error);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+app.put('/api/formulation-ingredients/:id', async (req, res) => {
+  try {
+    const ingredientId = req.params.id;
+    const { productId, targetMass, sequenceOrder, isActive } = req.body;
+    const existing = await pool.query(
+      'SELECT formulation_id, product_id FROM master_formulation_ingredients WHERE id = $1',
+      [ingredientId]
+    );
+    if (existing.rows.length === 0) {
+      return res.status(404).json({ success: false, error: 'Ingredient not found' });
+    }
+    const formulationId = existing.rows[0].formulation_id;
+    if (productId && productId !== existing.rows[0].product_id) {
+      await pool.query(
+        'UPDATE master_formulation_ingredients SET is_active = false, updated_at = CURRENT_TIMESTAMP WHERE id = $1',
+        [ingredientId]
+      );
+      const seq = sequenceOrder != null ? parseInt(sequenceOrder) : 999999;
+      const insertResult = await pool.query(
+        `INSERT INTO master_formulation_ingredients (formulation_id, product_id, target_mass, sequence_order, is_active)
+         VALUES ($1, $2, $3, $4, true)
+         ON CONFLICT (formulation_id, product_id) DO UPDATE
+           SET target_mass = EXCLUDED.target_mass, sequence_order = EXCLUDED.sequence_order,
+               is_active = true, updated_at = CURRENT_TIMESTAMP
+         RETURNING *`,
+        [formulationId, productId, parseFloat(targetMass || 0), seq]
+      );
+      await recalculateFormulationTotals(formulationId);
+      return res.json({ success: true, data: insertResult.rows[0], message: 'Ingredient product replaced' });
+    }
+    const updates = [];
+    const params = [];
+    let idx = 1;
+    if (targetMass != null) { updates.push(`target_mass = $${idx++}`); params.push(parseFloat(targetMass)); }
+    if (sequenceOrder != null) { updates.push(`sequence_order = $${idx++}`); params.push(parseInt(sequenceOrder)); }
+    if (isActive != null) { updates.push(`is_active = $${idx++}`); params.push(!!isActive); }
+    updates.push('updated_at = CURRENT_TIMESTAMP');
+    params.push(ingredientId);
+    const result = await pool.query(
+      `UPDATE master_formulation_ingredients SET ${updates.join(', ')} WHERE id = $${idx} RETURNING *`,
+      params
+    );
+    await recalculateFormulationTotals(formulationId);
+    res.json({ success: true, data: result.rows[0], message: 'Ingredient updated' });
+  } catch (error) {
+    console.error('Error updating formulation ingredient:', error);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+app.delete('/api/formulation-ingredients/:id', async (req, res) => {
+  try {
+    const ingredientId = req.params.id;
+    const existing = await pool.query(
+      'SELECT formulation_id FROM master_formulation_ingredients WHERE id = $1',
+      [ingredientId]
+    );
+    if (existing.rows.length === 0) {
+      return res.status(404).json({ success: false, error: 'Ingredient not found' });
+    }
+    const formulationId = existing.rows[0].formulation_id;
+    const woCheck = await pool.query(
+      `SELECT COUNT(*)::int as c FROM weighing_progress wp
+       WHERE wp.ingredient_id = $1 AND (COALESCE(wp.actual_mass, 0) > 0 OR wp.status IN ('weighing', 'completed', 'failed'))`,
+      [ingredientId]
+    );
+    if (parseInt(woCheck.rows[0].c) > 0) {
+      await pool.query(
+        'UPDATE master_formulation_ingredients SET is_active = false, updated_at = CURRENT_TIMESTAMP WHERE id = $1',
+        [ingredientId]
+      );
+    } else {
+      await pool.query('DELETE FROM master_formulation_ingredients WHERE id = $1', [ingredientId]);
+    }
+    await recalculateFormulationTotals(formulationId);
+    res.json({ success: true, message: 'Ingredient removed' });
+  } catch (error) {
+    console.error('Error deleting formulation ingredient:', error);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
 // Preview import endpoint
 app.post('/api/preview-import', async (req, res) => {
   try {
@@ -7727,23 +8527,20 @@ app.post('/api/preview-import', async (req, res) => {
         const formulationsMap = new Map();
         const formulationIngredients = [];
         
+        const importFormat = detectImportCsvFormat(csvData);
+        console.log(`📋 Import format detected: ${importFormat}`);
+
         // Parse CSV data
         for (const row of csvData) {
-          const formulationCode = row.formulationCode;
-          const formulationName = row.formulationName;
-          const productCode = row.productCode;
-          const productName = row.productName;
-          
-          // Parse targetMass more robustly
-          // Handle different decimal separators and trim whitespace
-          let targetMassStr = (row.targetMass || '0').toString().trim();
-          // Replace comma with period for decimal separator (support regional formats)
-          targetMassStr = targetMassStr.replace(',', '.');
-          const targetMass = parseFloat(targetMassStr);
-          
-          // Validate: if parsing failed (NaN), use 0 and log warning
+          const normalized = normalizeImportCsvRow(row, importFormat);
+          const { formulationCode, formulationName, productCode, productName, targetMass, scalingMode } = normalized;
+
           if (isNaN(targetMass)) {
-            console.warn(`⚠️  Invalid targetMass value for ${formulationCode}-${productCode}: "${row.targetMass}" (parsed as NaN). Using 0.`);
+            console.warn(`⚠️  Invalid targetMass value for ${formulationCode}-${productCode}. Using 0.`);
+          }
+
+          if (!formulationCode || !productCode) {
+            continue;
           }
           
           // Track unique products
@@ -7760,7 +8557,8 @@ app.post('/api/preview-import', async (req, res) => {
           if (!formulationsMap.has(formulationCode)) {
             formulationsMap.set(formulationCode, {
               code: formulationCode,
-              name: formulationName
+              name: formulationName,
+              scalingMode
             });
           }
           
@@ -7768,7 +8566,7 @@ app.post('/api/preview-import', async (req, res) => {
           formulationIngredients.push({
             formulationCode,
             productCode,
-            targetMass
+            targetMass: isNaN(targetMass) ? 0 : targetMass
           });
         }
         
@@ -7780,15 +8578,23 @@ app.post('/api/preview-import', async (req, res) => {
           );
           
           if (fullRefresh) {
-            // In full refresh mode, all will be new
-            preview.new_products++;
-            preview.changes.push({
-              type: 'new',
-              table: 'master_product',
-              description: `Will add new product ${code}: ${product.name}`,
-              new_value: product.name,
-              note: 'Existing products will be DELETED in full refresh mode'
-            });
+            if (existing.rows.length > 0) {
+              preview.updated_products++;
+              preview.changes.push({
+                type: 'updated',
+                table: 'master_product',
+                description: `Will upsert product ${code}`,
+                new_value: product.name
+              });
+            } else {
+              preview.new_products++;
+              preview.changes.push({
+                type: 'new',
+                table: 'master_product',
+                description: `Will add new product ${code}: ${product.name}`,
+                new_value: product.name
+              });
+            }
           } else {
             // Normal mode: check if exists
             if (existing.rows.length > 0) {
@@ -7854,6 +8660,76 @@ app.post('/api/preview-import', async (req, res) => {
         }
         
         preview.new_ingredients = successfulIngredients;
+
+        if (fullRefresh) {
+          const historyCheck = await pool.query(`
+            SELECT
+              (SELECT COUNT(*) FROM work_orders) as work_orders_count,
+              (SELECT COUNT(*) FROM weighing_progress) as weighing_progress_count
+          `);
+          const hc = historyCheck.rows[0];
+          preview.has_production_history = parseInt(hc.work_orders_count || 0) > 0 ||
+            parseInt(hc.weighing_progress_count || 0) > 0;
+          preview.import_mode = preview.has_production_history ? 'soft_sync' : 'hard_reset';
+
+          const importedKeys = new Set(
+            formulationIngredients.map(fi => `${fi.formulationCode}:${fi.productCode}`)
+          );
+          const importedFormulationCodes = new Set(formulationsMap.keys());
+
+          const existingBom = await pool.query(`
+            SELECT mf.formulation_code, mp.product_code, mfi.is_active
+            FROM master_formulation_ingredients mfi
+            JOIN master_formulation mf ON mfi.formulation_id = mf.id
+            JOIN master_product mp ON mfi.product_id = mp.id
+            WHERE COALESCE(mfi.is_active, true) = true
+          `);
+          let ingredientsToDeactivate = 0;
+          for (const row of existingBom.rows) {
+            const key = `${row.formulation_code}:${row.product_code}`;
+            if (!importedKeys.has(key)) ingredientsToDeactivate++;
+          }
+
+          const allFormulations = await pool.query(
+            "SELECT formulation_code, status FROM master_formulation WHERE status = 'active'"
+          );
+          let formulationsToDeactivate = 0;
+          for (const row of allFormulations.rows) {
+            if (!importedFormulationCodes.has(row.formulation_code)) formulationsToDeactivate++;
+          }
+
+          const orphanProducts = await pool.query(`
+            SELECT mp.id, mp.product_code FROM master_product mp
+            WHERE mp.product_category = 'raw' AND mp.status = 'active'
+              AND NOT EXISTS (
+                SELECT 1 FROM master_formulation_ingredients mfi
+                WHERE mfi.product_id = mp.id AND COALESCE(mfi.is_active, true) = true
+              )
+          `);
+          let productsInCsv = new Set(productsMap.keys());
+          let orphanProductsAfterImport = orphanProducts.rows.filter(p => !productsInCsv.has(p.product_code)).length;
+
+          preview.ingredients_to_deactivate = ingredientsToDeactivate;
+          preview.formulations_to_deactivate = formulationsToDeactivate;
+          preview.orphan_products_to_deactivate = orphanProductsAfterImport;
+
+          if (ingredientsToDeactivate > 0) {
+            preview.changes.push({
+              type: 'deleted',
+              table: 'master_formulation_ingredients',
+              description: `Estimasi ${ingredientsToDeactivate} baris BOM akan di-nonaktifkan (tidak ada di CSV)`,
+              old_value: `${ingredientsToDeactivate} ingredients`
+            });
+          }
+          if (formulationsToDeactivate > 0) {
+            preview.changes.push({
+              type: 'deleted',
+              table: 'master_formulation',
+              description: `Estimasi ${formulationsToDeactivate} formulasi akan di-nonaktifkan (tidak ada di CSV)`,
+              old_value: `${formulationsToDeactivate} formulations`
+            });
+          }
+        }
         
         // Clean up uploaded file
         fs.unlinkSync(filepath);
@@ -8105,28 +8981,20 @@ app.post('/api/import-database', async (req, res) => {
       const formulationsMap = new Map();
       const formulationIngredients = [];
       
+      const importFormat = detectImportCsvFormat(csvData);
+      console.log(`📋 Import format detected: ${importFormat}`);
+
       // Parse CSV data
       for (const row of csvData) {
         try {
-          const formulationCode = row.formulationCode || row.formulation_code || '';
-          const formulationName = row.formulationName || row.formulation_name || '';
-          const productCode = row.productCode || row.product_code || '';
-          const productName = row.productName || row.product_name || '';
-          
-          // Parse targetMass more robustly
-          // Handle different decimal separators and trim whitespace
-          let targetMassStr = (row.targetMass || row.target_mass || '0').toString().trim();
-          // Replace comma with period for decimal separator (support regional formats)
-          targetMassStr = targetMassStr.replace(',', '.');
-          const targetMass = parseFloat(targetMassStr);
-          
-          // Validate: if parsing failed (NaN), log warning and skip
+          const normalized = normalizeImportCsvRow(row, importFormat);
+          const { formulationCode, formulationName, productCode, productName, targetMass, scalingMode } = normalized;
+
           if (isNaN(targetMass)) {
-            console.warn(`⚠️  Invalid targetMass value for ${formulationCode}-${productCode}: "${row.targetMass || row.target_mass}" (parsed as NaN). Skipping row.`);
+            console.warn(`⚠️  Invalid targetMass value for ${formulationCode}-${productCode}. Skipping row.`);
             continue;
           }
           
-          // Validate required fields
           if (!formulationCode || !productCode) {
             console.warn(`⚠️  Skipping row with missing required fields: formulationCode=${formulationCode}, productCode=${productCode}`);
             continue;
@@ -8146,7 +9014,8 @@ app.post('/api/import-database', async (req, res) => {
         if (!formulationsMap.has(formulationCode)) {
           formulationsMap.set(formulationCode, {
             code: formulationCode,
-            name: formulationName
+            name: formulationName,
+            scalingMode
           });
         }
         
@@ -8273,9 +9142,9 @@ app.post('/api/import-database', async (req, res) => {
             // Update existing formulation
             await pool.query(
               `UPDATE master_formulation 
-               SET formulation_name = $1, sku = $2, status = 'active', updated_at = CURRENT_TIMESTAMP
-               WHERE formulation_code = $3`,
-              [formulation.name, formulation.code, code]
+               SET formulation_name = $1, sku = $2, scaling_mode = $3, status = 'active', updated_at = CURRENT_TIMESTAMP
+               WHERE formulation_code = $4`,
+              [formulation.name, formulation.code, formulation.scalingMode || 'per_1000g', code]
             );
             
             comparison.updated_products++; // Reuse counter for formulations
@@ -8289,9 +9158,9 @@ app.post('/api/import-database', async (req, res) => {
           } else {
             // Insert new formulation
             await pool.query(
-              `INSERT INTO master_formulation (formulation_code, formulation_name, sku, total_mass, total_ingredients, status)
-               VALUES ($1, $2, $3, 0, 0, 'active')`,
-              [formulation.code, formulation.name, formulation.code]
+              `INSERT INTO master_formulation (formulation_code, formulation_name, sku, total_mass, total_ingredients, scaling_mode, status)
+               VALUES ($1, $2, $3, 0, 0, $4, 'active')`,
+              [formulation.code, formulation.name, formulation.code, formulation.scalingMode || 'per_1000g']
             );
             
             comparison.new_formulations++;
@@ -8312,9 +9181,9 @@ app.post('/api/import-database', async (req, res) => {
           if (existing.rows.length === 0) {
             // Insert new formulation
             await pool.query(
-              `INSERT INTO master_formulation (formulation_code, formulation_name, sku, total_mass, total_ingredients, status)
-               VALUES ($1, $2, $3, 0, 0, 'active')`,
-              [formulation.code, formulation.name, formulation.code]
+              `INSERT INTO master_formulation (formulation_code, formulation_name, sku, total_mass, total_ingredients, scaling_mode, status)
+               VALUES ($1, $2, $3, 0, 0, $4, 'active')`,
+              [formulation.code, formulation.name, formulation.code, formulation.scalingMode || 'per_1000g']
             );
             
             comparison.new_formulations++;
@@ -8441,7 +9310,7 @@ app.post('/api/import-database', async (req, res) => {
       
       // Full Refresh: Mark ingredients as inactive if NOT in the new CSV import
       // Also reactivate ingredients that are in the new CSV but were previously inactive
-      if (fullRefresh) {
+          if (fullRefresh) {
         console.log('🗑️  Full Refresh: Processing ingredient activation/deactivation...');
         
         // Build set of (formulation_id, product_id) pairs from CSV import
@@ -8565,31 +9434,75 @@ app.post('/api/import-database', async (req, res) => {
               old_value: `${deactivatedIngredientsCount} ingredients deactivated`
             });
           }
+
+          // Deactivate formulation headers not present in CSV
+          const deactivateFormulationsResult = await pool.query(
+            `UPDATE master_formulation SET status = 'inactive', updated_at = CURRENT_TIMESTAMP
+             WHERE id IN (${placeholders}) AND status = 'active'`,
+            formulationIdsToDeactivate
+          );
+          const deactivatedFormulationsCount = deactivateFormulationsResult.rowCount || 0;
+          if (deactivatedFormulationsCount > 0) {
+            console.log(`✅ Marked ${deactivatedFormulationsCount} formulations as inactive (not in CSV)`);
+            comparison.changes.push({
+              type: 'deleted',
+              table: 'master_formulation',
+              description: `Marked ${deactivatedFormulationsCount} formulations as inactive (not in CSV)`,
+              old_value: `${deactivatedFormulationsCount} formulations deactivated`
+            });
+          }
+        }
+
+        // Deactivate raw products no longer referenced by any active BOM line
+        const orphanProductsResult = await pool.query(`
+          UPDATE master_product SET status = 'inactive', updated_at = CURRENT_TIMESTAMP
+          WHERE product_category = 'raw' AND status = 'active'
+            AND NOT EXISTS (
+              SELECT 1 FROM master_formulation_ingredients mfi
+              WHERE mfi.product_id = master_product.id AND COALESCE(mfi.is_active, true) = true
+            )
+          RETURNING product_code
+        `);
+        const orphanCount = orphanProductsResult.rowCount || 0;
+        if (orphanCount > 0) {
+          console.log(`✅ Marked ${orphanCount} orphan raw products as inactive`);
+          comparison.changes.push({
+            type: 'deleted',
+            table: 'master_product',
+            description: `Marked ${orphanCount} raw products as inactive (no active BOM reference)`,
+            old_value: `${orphanCount} products deactivated`
+          });
         }
       }
       
       comparison.new_ingredients = successfulIngredients;
       
-      // Update total_ingredients and total_mass for each formulation
+      // Update total_ingredients and total_mass for each formulation (active BOM lines only — matches UI / weighing)
       for (const [code, formulation] of formulationsMap) {
         const formulationId = formulationMap.get(code);
         if (formulationId) {
-          // Count ingredients for this formulation
+          // Count only active formulation ingredients with active products (same rules as GET /api/formulations/:id/ingredients)
           const countResult = await pool.query(
-            'SELECT COUNT(*) as count, COALESCE(SUM(target_mass), 0) as total FROM master_formulation_ingredients WHERE formulation_id = $1',
+            `SELECT COUNT(*)::int as count, COALESCE(SUM(mfi.target_mass), 0) as total
+             FROM master_formulation_ingredients mfi
+             LEFT JOIN master_product mp ON mfi.product_id = mp.id
+             WHERE mfi.formulation_id = $1
+               AND COALESCE(mfi.is_active, true) = true
+               AND COALESCE(mp.status, 'active') = 'active'`,
             [formulationId]
           );
           
           const ingredientCount = parseInt(countResult.rows[0].count) || 0;
           const totalMass = parseFloat(countResult.rows[0].total) || 0;
           
-          // Update total_ingredients and total_mass
+          // Update total_ingredients, total_mass, and scaling_mode
+          const scalingMode = formulation.scalingMode || 'per_1000g';
           await pool.query(
-            'UPDATE master_formulation SET total_ingredients = $1, total_mass = $2 WHERE id = $3',
-            [ingredientCount, totalMass, formulationId]
+            'UPDATE master_formulation SET total_ingredients = $1, total_mass = $2, scaling_mode = $3 WHERE id = $4',
+            [ingredientCount, totalMass, scalingMode, formulationId]
           );
           
-          console.log(`✅ Updated formulation ${code}: total_ingredients = ${ingredientCount}, total_mass = ${totalMass}`);
+          console.log(`✅ Updated formulation ${code}: total_ingredients = ${ingredientCount}, total_mass = ${totalMass}, scaling_mode = ${scalingMode}`);
         }
       }
       
@@ -9117,24 +10030,6 @@ app.post('/api/print/batch', async (req, res) => {
   }
 });
 
-// Health check endpoint
-app.get('/api/health', async (req, res) => {
-  try {
-    await pool.query('SELECT 1');
-    res.json({
-      success: true,
-      message: 'Database connection is healthy',
-      timestamp: new Date().toISOString()
-    });
-  } catch (error) {
-    res.status(500).json({
-      success: false,
-      error: 'Database connection failed',
-      details: error.message
-    });
-  }
-});
-
 // Serve React app for all other routes
 app.get('*', (req, res) => {
   res.sendFile(path.join(distDir, 'index.html'));
@@ -9219,9 +10114,12 @@ server.listen(PORT, '0.0.0.0', () => {
     });
   }
   
+  // In development, open the Vite app. The API stays on this server port.
+  const browserUrl = process.pkg ? url : 'http://localhost:3000';
+
   // Auto-open browser after server starts (delay to ensure server is ready)
   setTimeout(() => {
-    logToFile(`\n🌐 Opening browser at ${url}...`);
+    logToFile(`\n🌐 Opening browser at ${browserUrl}...`);
     
     const { exec } = require('child_process');
     const os = require('os');
@@ -9230,18 +10128,18 @@ server.listen(PORT, '0.0.0.0', () => {
     let command;
     if (os.platform() === 'win32') {
       // Windows: use 'start' command
-      command = `start ${url}`;
+      command = `start ${browserUrl}`;
     } else if (os.platform() === 'darwin') {
       // macOS: use 'open' command
-      command = `open ${url}`;
+      command = `open ${browserUrl}`;
     } else {
       // Linux: use 'xdg-open' command
-      command = `xdg-open ${url}`;
+      command = `xdg-open ${browserUrl}`;
     }
     
     exec(command, (error) => {
       if (error) {
-        logToFile(`⚠️ Could not auto-open browser. Please manually open: ${url}`);
+        logToFile(`⚠️ Could not auto-open browser. Please manually open: ${browserUrl}`);
       } else {
         logToFile(`✅ Browser opened successfully`);
       }

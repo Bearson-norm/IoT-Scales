@@ -1,14 +1,15 @@
 import React, { useState, useEffect } from 'react'
-import { Settings as SettingsIcon, Save, RotateCcw, Scale, Database, User, Bell, Shield, Server, Printer } from 'lucide-react'
+import { Settings as SettingsIcon, Save, RotateCcw, Scale, Database, User, Bell, Shield, Server, Printer, CheckCircle, Circle, Upload } from 'lucide-react'
 import ServerDatabaseConfig from './ServerDatabaseConfig'
 import { useAlert } from '../utils/alertModal'
 import { createDefaultLabelTemplate, mergeTemplateWithDefaults, cloneTemplate } from '../utils/labelTemplates'
+import useBranding from '../hooks/useBranding'
 
 // API Base URL for standalone executable compatibility
 const API_BASE_URL = 'http://localhost:3001/api'
 
 // Label Preview Component
-const LabelPreview = ({ width, height, dpi, layout = {} }) => {
+const LabelPreview = ({ width, height, dpi, layout = {}, companyName = 'KMI' }) => {
   // Default layout values (matching server.js DEFAULT_LABEL_LAYOUT)
   const DEFAULT_LAYOUT = {
     marginLeftMm: 5,
@@ -140,7 +141,7 @@ const LabelPreview = ({ width, height, dpi, layout = {} }) => {
             fontSize: `${headerFontPx}px`,
             fontWeight: 'bold'
           }}>
-            LABEL PENIMBANGAN PT KMI
+            LABEL PENIMBANGAN {companyName.toUpperCase()}
           </div>
           {sampleData.moNumber && (
             <div style={{
@@ -313,10 +314,16 @@ const cloneDefaultLabelTemplate = () =>
 
 const Settings = () => {
   const { alert } = useAlert()
+  const { logoSrc, companyName: brandingCompanyName } = useBranding()
   const [activeTab, setActiveTab] = useState('general')
+  const [onboardingDismissed, setOnboardingDismissed] = useState(
+    () => localStorage.getItem('admin_onboarding_dismissed') === 'true'
+  )
+  const [dbHealthOk, setDbHealthOk] = useState(null)
+  const [logoUploading, setLogoUploading] = useState(false)
   const [settings, setSettings] = useState({
     // General Settings
-    companyName: 'Kebanggaan Masyarakat Indonesia',
+    companyName: 'KMI',
     appVersion: 'v1.0.0',
     language: 'id',
     timezone: 'Asia/Jakarta',
@@ -396,6 +403,23 @@ const Settings = () => {
   const [serialAvailable, setSerialAvailable] = useState(true)
   const [serialPortActive, setSerialPortActive] = useState(false)
   const [availablePorts, setAvailablePorts] = useState([]) // Dynamic port list
+
+  useEffect(() => {
+    fetch(`${API_BASE_URL.replace(/\/api\/?$/, '')}/api/health`)
+      .then(r => r.json())
+      .then(data => setDbHealthOk(!!data.success))
+      .catch(() => setDbHealthOk(false))
+  }, [])
+
+  useEffect(() => {
+    if (brandingCompanyName) {
+      setSettings(prev => (
+        prev.companyName === brandingCompanyName
+          ? prev
+          : { ...prev, companyName: brandingCompanyName }
+      ))
+    }
+  }, [brandingCompanyName])
 
   useEffect(() => {
     // Load scale config from server
@@ -824,7 +848,7 @@ const Settings = () => {
     if (window.confirm('Apakah Anda yakin ingin mengembalikan pengaturan ke default?')) {
       // Reset to default values
       setSettings({
-        companyName: 'FoomLabGlobal',
+        companyName: 'KMI',
         appVersion: 'v1.7.0',
         language: 'id',
         timezone: 'Asia/Jakarta',
@@ -868,8 +892,119 @@ const Settings = () => {
     { id: 'api-reporting', label: 'API Reporting', icon: Server }
   ]
 
+  const handleLogoUpload = async (e) => {
+    const file = e.target.files?.[0]
+    if (!file) return
+    const maxSize = 2 * 1024 * 1024
+    if (file.size > maxSize) {
+      alert.error(`File terlalu besar (${(file.size / 1024).toFixed(0)} KB). Maksimal 2 MB.`, 'Branding')
+      e.target.value = ''
+      return
+    }
+    setLogoUploading(true)
+    try {
+      const formData = new FormData()
+      formData.append('logo', file)
+      formData.append('companyName', settings.companyName)
+      const resp = await fetch(`${API_BASE_URL.replace(/\/api\/?$/, '')}/api/branding/logo`, {
+        method: 'POST',
+        body: formData
+      })
+      const data = await resp.json()
+      if (data.success) {
+        alert.success('Logo berhasil diupload. Refresh halaman untuk melihat perubahan.', 'Branding')
+        window.location.reload()
+      } else {
+        alert.error(data.error || 'Upload gagal', 'Branding')
+      }
+    } catch (err) {
+      alert.error(err.message, 'Branding')
+    } finally {
+      setLogoUploading(false)
+    }
+  }
+
+  const handleLogoReset = async () => {
+    try {
+      const resp = await fetch(`${API_BASE_URL.replace(/\/api\/?$/, '')}/api/branding/logo`, { method: 'DELETE' })
+      const data = await resp.json()
+      if (data.success) {
+        alert.success('Logo direset ke default.', 'Branding')
+        window.location.reload()
+      }
+    } catch (err) {
+      alert.error(err.message, 'Branding')
+    }
+  }
+
+  const onboardingSteps = [
+    { id: 'db', label: 'Database siap (health check OK)', done: dbHealthOk === true, tab: 'database' },
+    { id: 'scale', label: 'Konfigurasi timbangan (port & baud rate)', done: !!settings.scalePort, tab: 'scale' },
+    { id: 'printer', label: 'Konfigurasi printer label', done: !!settings.printerPort || !!settings.printerIP, tab: 'printer' },
+    { id: 'import', label: 'Import data master (CSV formulation)', done: localStorage.getItem('master_data_imported') === 'true', tab: 'database' },
+    { id: 'logo', label: 'Upload logo perusahaan (opsional)', done: !!brandingCompanyName && logoSrc.includes('/branding/'), tab: 'general' },
+  ]
+
   const renderGeneralSettings = () => (
     <div className="settings-section">
+      {!onboardingDismissed && (
+        <div style={{ marginBottom: '24px', padding: '20px', background: '#f0f9ff', border: '1px solid #bae6fd', borderRadius: '8px' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
+            <h3 style={{ margin: 0, fontSize: '16px' }}>Checklist Setup Awal (Admin)</h3>
+            <button
+              type="button"
+              className="btn btn-secondary"
+              style={{ fontSize: '12px', padding: '4px 10px' }}
+              onClick={() => {
+                localStorage.setItem('admin_onboarding_dismissed', 'true')
+                setOnboardingDismissed(true)
+              }}
+            >
+              Sembunyikan
+            </button>
+          </div>
+          <ul style={{ listStyle: 'none', padding: 0, margin: 0 }}>
+            {onboardingSteps.map(step => (
+              <li key={step.id} style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '8px', fontSize: '14px' }}>
+                {step.done ? <CheckCircle size={16} color="#16a34a" /> : <Circle size={16} color="#9ca3af" />}
+                <button
+                  type="button"
+                  onClick={() => setActiveTab(step.tab)}
+                  style={{ background: 'none', border: 'none', cursor: 'pointer', textAlign: 'left', color: step.done ? '#166534' : '#374151' }}
+                >
+                  {step.label}
+                </button>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+
+      <h3>Branding & Logo</h3>
+      <div className="settings-grid" style={{ marginBottom: '24px' }}>
+        <div className="form-group">
+          <label className="form-label">Logo Saat Ini</label>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
+            <img src={logoSrc} alt="Logo" style={{ maxHeight: '64px', maxWidth: '160px', objectFit: 'contain', border: '1px solid #e5e7eb', borderRadius: '4px', padding: '4px' }} />
+            <div>
+              <label className="btn btn-primary" style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', cursor: 'pointer' }}>
+                <Upload size={14} />
+                {logoUploading ? 'Uploading...' : 'Upload Logo'}
+                <input type="file" accept="image/png,image/jpeg,image/svg+xml,image/webp" onChange={handleLogoUpload} disabled={logoUploading} style={{ display: 'none' }} />
+              </label>
+              <button type="button" className="btn btn-secondary" style={{ marginLeft: '8px' }} onClick={handleLogoReset}>
+                Reset Default
+              </button>
+              <p style={{ fontSize: '12px', color: '#6b7280', marginTop: '6px' }}>
+                Format: PNG, JPEG, SVG, WebP. Maksimal 2 MB.
+                <br />
+                Atau letakkan file di folder <code>branding/logo.png</code> sebelum deploy.
+              </p>
+            </div>
+          </div>
+        </div>
+      </div>
+
       <h3>Pengaturan Umum</h3>
       <div className="settings-grid">
         <div className="form-group">
@@ -2066,6 +2201,7 @@ const Settings = () => {
                   height={heightMm}
                   dpi={dpi}
                   layout={activeTemplate?.layout || {}}
+                  companyName={settings.companyName}
                 />
               </div>
 

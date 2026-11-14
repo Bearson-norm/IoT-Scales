@@ -2,9 +2,11 @@ import React, { useState, useEffect } from 'react'
 import api from '../services/api'
 import { ArrowLeft, Printer, Clock, Package, Scale, CheckCircle, AlertCircle, Calendar, FileText, List, RotateCcw, X, Send } from 'lucide-react'
 import { useAlert } from '../utils/alertModal'
+import useBranding from '../hooks/useBranding'
 
 const HistoryDetail = ({ moNumber, onBack, currentUser }) => {
   const { alert } = useAlert()
+  const { companyName } = useBranding()
   const navigate = (path) => {
     if (onBack) {
       onBack()
@@ -200,6 +202,14 @@ const HistoryDetail = ({ moNumber, onBack, currentUser }) => {
               border-bottom: 2px solid #1f2937;
             }
             
+            .print-company {
+              font-size: 14pt;
+              font-weight: bold;
+              color: #1f2937;
+              margin-bottom: 6px;
+              letter-spacing: 0.5px;
+            }
+            
             .print-title {
               font-size: 18pt;
               font-weight: bold;
@@ -309,6 +319,7 @@ const HistoryDetail = ({ moNumber, onBack, currentUser }) => {
         </head>
         <body>
           <div class="print-header">
+            <div class="print-company">${companyName}</div>
             <div class="print-title">Report Summary Penimbangan</div>
             <div class="print-info">
               <div class="print-info-item">
@@ -357,7 +368,8 @@ const HistoryDetail = ({ moNumber, onBack, currentUser }) => {
           </div>
           
           <div class="print-footer">
-            <div>Laporan ini dicetak pada: ${new Date().toLocaleString('id-ID')}</div>
+            <div>${companyName}</div>
+            <div style="margin-top: 4px;">Laporan ini dicetak pada: ${new Date().toLocaleString('id-ID')}</div>
             <div style="margin-top: 4px;">Work Order: ${workOrder.work_order}</div>
           </div>
         </body>
@@ -555,24 +567,30 @@ const HistoryDetail = ({ moNumber, onBack, currentUser }) => {
         }),
       })
 
-      const result = await response.json()
+      let result
+      try {
+        result = await response.json()
+      } catch (e) {
+        throw new Error(`HTTP ${response.status}: ${response.statusText}`)
+      }
 
-      if (result.success) {
+      if (response.ok && result.success) {
         alert('MO berhasil diaktifkan kembali!')
         setShowReactivateModal(false)
         setReactivateNote('')
-        // Refresh history detail
         const resp = await fetch(`/api/history/${encodeURIComponent(moNumber)}`)
         const data = await resp.json()
         if (data.success) {
           setHistoryDetail(data.data)
         }
       } else {
-        alert('Error: ' + (result.error || 'Gagal mengaktifkan kembali MO'))
+        const detail = result.details ? `\n\nDetail: ${result.details}` : ''
+        const code = result.code ? `\nKode: ${result.code}` : ''
+        alert(`Gagal mengaktifkan kembali MO: ${result.error || 'Unknown error'}${detail}${code}`)
       }
     } catch (error) {
       console.error('Error reactivating MO:', error)
-      alert('Error: ' + error.message)
+      alert(`Error: ${error.message}`)
     } finally {
       setIsReactivating(false)
     }
@@ -1013,8 +1031,21 @@ const HistoryDetail = ({ moNumber, onBack, currentUser }) => {
               borderBottom: '2px solid #f3f4f6'
             }}>
               <div>
-                <div style={{ fontSize: '18px', fontWeight: '600', color: '#1f2937', marginBottom: '4px' }}>
+                <div style={{ fontSize: '18px', fontWeight: '600', color: '#1f2937', marginBottom: '4px', display: 'flex', alignItems: 'center', gap: '8px' }}>
                   {ingredient.ingredient_name}
+                  {ingredient.bom_is_active === false && (
+                    <span style={{
+                      fontSize: '11px',
+                      fontWeight: '600',
+                      color: '#92400e',
+                      backgroundColor: '#fef3c7',
+                      padding: '2px 8px',
+                      borderRadius: '4px',
+                      border: '1px solid #fcd34d'
+                    }}>
+                      BOM inactive
+                    </span>
+                  )}
                 </div>
                 <div style={{ fontSize: '14px', color: '#6b7280' }}>
                   Code: {ingredient.ingredient_code}

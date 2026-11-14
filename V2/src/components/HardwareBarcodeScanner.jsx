@@ -259,7 +259,7 @@ const HardwareBarcodeScanner = ({ type, onScan, onClose }) => {
         </div>
       </div>
 
-      <style jsx>{`
+      <style>{`
         .scanner-status {
           background: #f8f9fa;
           border: 1px solid #e9ecef;

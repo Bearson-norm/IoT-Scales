@@ -1,13 +1,15 @@
 import React from 'react'
 import { RefreshCw, LogOut, User } from 'lucide-react'
-import logoImage from '../assets/logo-km.jpeg'
+import useBranding from '../hooks/useBranding'
 
 const Header = ({ currentUser, onRefresh, onLogout }) => {
+  const { logoSrc, companyName } = useBranding()
+
   return (
     <div className="header">
       <div className="logo">
-        <img src={logoImage} alt="Logo" />
-        <span>Kebanggaan Masyarakat Indonesia</span>
+        <img src={logoSrc} alt={companyName} />
+        <span>{companyName}</span>
       </div>
       
       <button className="refresh-btn" onClick={onRefresh}>

@@ -211,7 +211,7 @@ const MasterFormulation = () => {
       setLoading(true)
       setError(null)
       console.log('🔄 Loading formulations from API...')
-      const response = await apiService.getFormulations()
+      const response = await apiService.getFormulations({ includeInactive: true })
       console.log('📊 API Response:', response)
       if (response.success) {
         console.log('✅ Formulations loaded:', response.data.length, 'records')

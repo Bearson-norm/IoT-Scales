@@ -6,11 +6,15 @@ Aplikasi penimbangan mixing untuk proses manufaktur produksi yang memungkinkan p
 
 ### Windows Setup (5 Menit)
 ```bash
-# 1. Clone/download proyek
-# 2. Install Node.js dan PostgreSQL
-# 3. Jalankan setup otomatis
+# 1. Install Node.js 18+ dan PostgreSQL
+# 2. Jalankan setup otomatis
+check-requirements.bat   # opsional
 setup.bat
+# Frontend: http://localhost:3000  |  API: http://localhost:3001
+# Login: admin / admin123
 ```
+
+Panduan lengkap: **[docs/SETUP_GUIDE.md](docs/SETUP_GUIDE.md)**
 
 ### Linux/macOS Setup
 ```bash
@@ -116,7 +120,7 @@ IoT-Scales-V2/
 ## 📚 Dokumentasi
 
 ### Setup and Installation
-- **[Setup Guide](SETUP_GUIDE.md)** - Panduan setup lengkap
+- **[Setup Guide](docs/SETUP_GUIDE.md)** - Panduan setup lengkap (port, password, branding)
 - **[Quick Start](QUICK_START.md)** - Setup cepat
 - **[Troubleshooting](TROUBLESHOOTING.md)** - Panduan troubleshooting
 

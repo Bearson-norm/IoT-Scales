@@ -1,15 +1,101 @@
-import React, { useEffect, useState } from 'react'
+import React, { useEffect, useRef, useState } from 'react'
 import api from '../services/api'
+import {
+  SCALING_MODE_PER_UNIT,
+  computeMoScaling,
+  getScalingBaseQuantity
+} from '../utils/scaling'
+
+const ingredientHasSavedProgress = (ingredient) => {
+  const actualMass = parseFloat(ingredient?.actual_mass || 0) || 0
+  const status = ingredient?.status || 'pending'
+  return actualMass > 0 || status !== 'pending'
+}
+
+const describeExistingWorkOrder = (workOrder, ingredients) => {
+  const rows = ingredients || []
+  const isReactivated = workOrder.qc_reactivated_at != null
+  const isRejected = workOrder.status === 'reject' && !isReactivated
+  const hasProgress = rows.some(ingredientHasSavedProgress)
+  const canResume = !isRejected && (workOrder.status === 'in_progress' || hasProgress)
+
+  return {
+    workOrder,
+    ingredients: rows,
+    isRejected,
+    isReactivated,
+    hasProgress,
+    canResume,
+    totalIngredients: rows.length,
+    completedIngredients: rows.filter(ingredient => (ingredient.status || 'pending') === 'completed').length,
+    inProgressIngredients: rows.filter(ingredient => {
+      const status = ingredient.status || 'pending'
+      const actualMass = parseFloat(ingredient.actual_mass || 0) || 0
+      return status === 'weighing' || (status === 'pending' && actualMass > 0)
+    }).length
+  }
+}
+
+const lookupWorkOrder = async (moNumber) => {
+  const data = await api.getWorkOrderByNumber(moNumber)
+  if (!data?.success || !data?.data?.workOrder) return null
+  return describeExistingWorkOrder(data.data.workOrder, data.data.ingredients || [])
+}
+
+const buildResumeMoData = (moNumber, found) => {
+  const wo = found.workOrder
+  const scalingMode = wo.scaling_mode || 'per_1000g'
+  const baseQuantity = getScalingBaseQuantity(scalingMode, wo.formulation_total_mass)
+  const savedQuantity = parseFloat(wo.planned_quantity || baseQuantity)
+  const scalingFactor = baseQuantity > 0 ? savedQuantity / baseQuantity : 1
+
+  return {
+    moNumber,
+    skuName: wo.formulation_name || 'Unknown',
+    quantity: String(savedQuantity),
+    plannedUnits: wo.planned_units != null ? parseFloat(wo.planned_units) : null,
+    scalingMode,
+    formulationId: wo.formulation_id,
+    formulationCode: wo.formulation_code || 'Unknown',
+    baseQuantity,
+    scalingFactor,
+    ingredients: found.ingredients.map(it => ({
+      ingredient_id: it.ingredient_id,
+      formulation_ingredient_id: it.ingredient_id,
+      product_id: it.product_id,
+      product_code: it.product_code || '',
+      product_name: it.product_name || 'Unknown',
+      target_mass: parseFloat(it.target_mass || 0) || 0,
+      base_target_mass: parseFloat(it.base_target_mass || 0) || 0,
+      actual_mass: parseFloat(it.actual_mass || 0) || 0,
+      status: it.status || 'pending',
+      progress_percentage: parseFloat(it.progress_percentage || 0) || 0,
+      remaining_weight: parseFloat(it.remaining_weight || 0) || 0,
+      is_within_tolerance: it.is_within_tolerance,
+      tolerance_min: it.tolerance_min != null ? parseFloat(it.tolerance_min) : null,
+      tolerance_max: it.tolerance_max != null ? parseFloat(it.tolerance_max) : null,
+      weighing_started_at: it.weighing_started_at,
+      weighing_updated_at: it.weighing_updated_at,
+      weighing_completed_at: it.weighing_completed_at,
+      weighing_notes: it.weighing_notes || '',
+      last_session_number: it.last_session_number || null
+    })),
+    isResume: true
+  }
+}
 
 const MOScanModal = ({ isOpen, onClose, onStartWeighing }) => {
   const [moNumber, setMoNumber] = useState('')
+  const moNumberRef = useRef('')
+  moNumberRef.current = moNumber
   const [skuInput, setSkuInput] = useState('')
   const [quantity, setQuantity] = useState('')
   const [loading, setLoading] = useState(false)
   const [formulations, setFormulations] = useState([])
   const [selectedFormulation, setSelectedFormulation] = useState(null)
+  const [formulationMeta, setFormulationMeta] = useState(null)
   const [error, setError] = useState('')
-  const [existingWorkOrder, setExistingWorkOrder] = useState(null) // Store existing work order for resume
+  const [existingWorkOrder, setExistingWorkOrder] = useState(null)
   const [checkingMO, setCheckingMO] = useState(false)
 
   useEffect(() => {
@@ -18,97 +104,86 @@ const MOScanModal = ({ isOpen, onClose, onStartWeighing }) => {
     setLoading(false)
     setFormulations([])
     setSelectedFormulation(null)
-    setExistingWorkOrder(null)
+    setFormulationMeta(null)
   }, [isOpen])
 
-  // Check for existing work order when MO number changes
-  useEffect(() => {
-    const checkExistingMO = async () => {
-      if (!moNumber || moNumber.length < 3) {
-        setExistingWorkOrder(null)
-        return
-      }
+  const pickBestFormulation = (list, query) => {
+    if (!list.length) return null
+    const q = (query || '').toLowerCase()
+    return (
+      list.find(f => (f.formulation_name || '').toLowerCase() === q) ||
+      list.find(f => (f.formulation_code || '').toLowerCase() === q) ||
+      list.find(f => (f.sku || '').toLowerCase() === q) ||
+      list.find(f =>
+        (f.formulation_name || '').toLowerCase().includes(q) ||
+        (f.formulation_code || '').toLowerCase().includes(q) ||
+        (f.sku || '').toLowerCase().includes(q)
+      ) ||
+      list[0]
+    )
+  }
 
-      setCheckingMO(true)
-      try {
-        const resp = await fetch(`/api/work-orders/${encodeURIComponent(moNumber)}`)
-        const data = await resp.json()
-        
-        if (data && data.success && data.data && data.data.workOrder) {
-          const wo = data.data.workOrder
-          const ingredients = data.data.ingredients || []
-          
-          // Check if work order status is 'reject'
-          if (wo.status === 'reject') {
-            // Check if it has been reactivated by QC
-            const isReactivated = wo.qc_reactivated_at !== null && wo.qc_reactivated_at !== undefined
-            
-            if (!isReactivated) {
-              // MO is rejected and not yet reactivated by QC - block resume
-              setExistingWorkOrder({
-                workOrder: wo,
-                ingredients: ingredients,
-                isRejected: true,
-                isReactivated: false,
-                hasProgress: false // Set to false to prevent resume
-              })
-              console.log(`🚫 Found rejected work order ${moNumber} that requires QC approval`)
-              return
-            } else {
-              // MO is rejected but has been reactivated by QC - allow resume
-              console.log(`✅ Found rejected work order ${moNumber} that has been reactivated by QC`)
-            }
-          }
-          
-          // Check if there's any progress (ingredients with saved weight > 0 or status != 'pending')
-          const hasProgress = ingredients.some(ing => {
-            const actualMass = parseFloat(ing.actual_mass || 0) || 0
-            const status = ing.status || 'pending'
-            return actualMass > 0 || status !== 'pending'
-          })
-          
-          if (hasProgress) {
-            // Calculate progress summary
-            const totalIngredients = ingredients.length
-            const completedIngredients = ingredients.filter(ing => {
-              const status = ing.status || 'pending'
-              return status === 'completed'
-            }).length
-            const inProgressIngredients = ingredients.filter(ing => {
-              const status = ing.status || 'pending'
-              const actualMass = parseFloat(ing.actual_mass || 0) || 0
-              return status === 'weighing' || (status === 'pending' && actualMass > 0)
-            }).length
-            
-            setExistingWorkOrder({
-              workOrder: wo,
-              ingredients: ingredients,
-              totalIngredients,
-              completedIngredients,
-              inProgressIngredients,
-              hasProgress: true,
-              isRejected: wo.status === 'reject',
-              isReactivated: wo.qc_reactivated_at !== null && wo.qc_reactivated_at !== undefined
-            })
-            console.log(`📋 Found existing work order ${moNumber} with progress: ${completedIngredients}/${totalIngredients} completed, ${inProgressIngredients} in progress`)
-          } else {
-            setExistingWorkOrder(null)
-          }
-        } else {
-          setExistingWorkOrder(null)
-        }
-      } catch (e) {
-        console.warn('Error checking existing MO:', e)
-        setExistingWorkOrder(null)
-      } finally {
-        setCheckingMO(false)
-      }
+  useEffect(() => {
+    if (!skuInput || skuInput.length < 2) {
+      setFormulationMeta(null)
+      return
     }
 
-    // Debounce MO check
-    const timeoutId = setTimeout(checkExistingMO, 500)
+    const timeoutId = setTimeout(async () => {
+      try {
+        const searchResp = await api.request(`/formulations/search?q=${encodeURIComponent(skuInput)}`)
+        const list = (searchResp && searchResp.data) || []
+        setFormulationMeta(pickBestFormulation(list, skuInput))
+      } catch {
+        setFormulationMeta(null)
+      }
+    }, 400)
+
     return () => clearTimeout(timeoutId)
-  }, [moNumber])
+  }, [skuInput])
+
+  // Re-check whenever the modal opens or the MO number changes.
+  // Closing the modal used to drop the resume result without looking the number up again.
+  useEffect(() => {
+    if (!isOpen) return undefined
+
+    const moRequested = String(moNumber || '').trim()
+    if (moRequested.length < 3) {
+      setExistingWorkOrder(null)
+      setCheckingMO(false)
+      return undefined
+    }
+
+    let cancelled = false
+    setCheckingMO(true)
+    setExistingWorkOrder(prev => {
+      const prevNumber = prev?.workOrder?.work_order_number
+      if (prevNumber != null && String(prevNumber).trim() === moRequested) return prev
+      return null
+    })
+
+    const timeoutId = setTimeout(async () => {
+      try {
+        const found = await lookupWorkOrder(moRequested)
+        if (cancelled || String(moNumberRef.current).trim() !== moRequested) return
+        setExistingWorkOrder(found)
+      } catch (e) {
+        console.warn('Error checking existing MO:', e)
+        if (!cancelled && String(moNumberRef.current).trim() === moRequested) {
+          setExistingWorkOrder(null)
+        }
+      } finally {
+        if (!cancelled && String(moNumberRef.current).trim() === moRequested) {
+          setCheckingMO(false)
+        }
+      }
+    }, 400)
+
+    return () => {
+      cancelled = true
+      clearTimeout(timeoutId)
+    }
+  }, [moNumber, isOpen])
 
   const searchFormulations = async () => {
     setError('')
@@ -124,6 +199,7 @@ const MOScanModal = ({ isOpen, onClose, onStartWeighing }) => {
         return name.includes(q) || code.includes(q) || sku.includes(q)
       })
       setFormulations(matched)
+      setFormulationMeta(pickBestFormulation(matched, skuInput))
     } catch (e) {
       setError('Gagal mengambil data formulasi')
     } finally {
@@ -131,137 +207,167 @@ const MOScanModal = ({ isOpen, onClose, onStartWeighing }) => {
     }
   }
 
+  const buildMoData = (best, ingredients, scaling, inputQty) => {
+    const scaledIngredients = (ingredients || []).map(it => {
+      const baseTargetMass = parseFloat(it.target_mass || it.mass || it.target || 0) || 0
+      const scaledTargetMass = baseTargetMass * scaling.scalingFactor
+
+      return {
+        formulation_ingredient_id: it.id || it.ingredient_id,
+        product_id: it.product_id,
+        product_code: it.product_code || it.ingredient_code || it.code,
+        product_name: it.product_name || it.ingredient_name || it.name,
+        target_mass: scaledTargetMass,
+        base_target_mass: baseTargetMass
+      }
+    })
+
+    return {
+      skuName: best.formulation_name || best.product_name || best.name || skuInput,
+      quantity: String(scaling.plannedQuantityGrams),
+      plannedUnits: scaling.plannedUnits,
+      scalingMode: best.scaling_mode || 'per_1000g',
+      formulationId: best.id,
+      formulationCode: best.formulation_code || best.product_code || best.code || skuInput,
+      baseQuantity: scaling.baseQuantity,
+      scalingFactor: scaling.scalingFactor,
+      ingredients: scaledIngredients,
+      inputQuantity: inputQty
+    }
+  }
+
+  const attachTolerancePreviews = async (moData) => {
+    if (!moData?.ingredients?.length || !moData.formulationId) return moData
+    try {
+      const items = moData.ingredients.map(ing => ({
+        key: ing.formulation_ingredient_id || ing.ingredient_id,
+        productId: ing.product_id,
+        targetMass: ing.target_mass
+      }))
+      const res = await api.resolveWeighingToleranceBatch(moData.formulationId, items)
+      if (!res.success) return moData
+      const byKey = {}
+      ;(res.data || []).forEach(row => {
+        if (row.key != null) byKey[String(row.key)] = row
+      })
+      return {
+        ...moData,
+        ingredients: moData.ingredients.map(ing => {
+          const key = String(ing.formulation_ingredient_id || ing.ingredient_id || '')
+          const row = byKey[key]
+          if (row && !row.error) {
+            return {
+              ...ing,
+              tolerance_min: row.tolerance_min,
+              tolerance_max: row.tolerance_max
+            }
+          }
+          return ing
+        })
+      }
+    } catch (e) {
+      console.warn('Tolerance preview failed:', e)
+      return moData
+    }
+  }
+
   const handleSubmit = async (e) => {
     e.preventDefault()
     setError('')
-    
-    // Check if MO is rejected and not reactivated by QC
-    if (existingWorkOrder && existingWorkOrder.isRejected && !existingWorkOrder.isReactivated) {
-      setError('MO ini telah ditolak (REJECT) karena melebihi toleransi. Mohon minta persetujuan QC terlebih dahulu sebelum melanjutkan proses penimbangan. Silakan hubungi QC Officer untuk melakukan approval.')
+
+    const moRequested = String(moNumber || '').trim()
+    if (!moRequested) {
+      setError('Nomor MO wajib diisi')
       return
     }
-    
-    // If existing work order found, resume directly
-    if (existingWorkOrder && existingWorkOrder.hasProgress) {
-      const wo = existingWorkOrder.workOrder
-      const ings = existingWorkOrder.ingredients
-      
-      // Resume with existing data - preserve all fields from database
-      // Note: target_mass in database is already scaled, no need to scale again
-      const savedQuantity = parseFloat(wo.planned_quantity || quantity || 1000)
-      const baseQuantity = 1000
-      const scalingFactor = savedQuantity / baseQuantity
-      
-      console.log(`📋 Resume with scaling: Quantity=${savedQuantity}g, Factor=${scalingFactor}x`)
-      
-      const moData = {
-        moNumber,
-        skuName: wo.formulation_name || skuInput || 'Unknown',
-        quantity: String(wo.planned_quantity || quantity || '1'),
-        formulationId: wo.formulation_id,
-        formulationCode: wo.formulation_code || skuInput || 'Unknown',
-        baseQuantity, // Store base quantity for reference
-        scalingFactor, // Store scaling factor for reference
-        ingredients: ings.map(it => ({
-          ingredient_id: it.ingredient_id, // Primary ID from database
-          formulation_ingredient_id: it.ingredient_id, // Alias for compatibility
-          product_code: it.product_code || '',
-          product_name: it.product_name || 'Unknown',
-          target_mass: parseFloat(it.target_mass || 0) || 0,
-          actual_mass: parseFloat(it.actual_mass || 0) || 0,
-          status: it.status || 'pending',
-          // Include all tracking fields for proper resume
-          progress_percentage: parseFloat(it.progress_percentage || 0) || 0,
-          remaining_weight: parseFloat(it.remaining_weight || 0) || 0,
-          is_within_tolerance: it.is_within_tolerance,
-          tolerance_min: parseFloat(it.tolerance_min || 0) || 0,
-          tolerance_max: parseFloat(it.tolerance_max || 0) || 0,
-          weighing_started_at: it.weighing_started_at,
-          weighing_updated_at: it.weighing_updated_at,
-          weighing_completed_at: it.weighing_completed_at,
-          weighing_notes: it.weighing_notes || ''
-        })),
-        isResume: true // Flag to indicate this is a resume
+
+    setLoading(true)
+    let found = null
+    try {
+      found = await lookupWorkOrder(moRequested)
+      if (String(moNumberRef.current).trim() === moRequested) {
+        setExistingWorkOrder(found)
       }
-      
-      console.log('📋 Resume MO data prepared:', {
-        moNumber,
-        formulationId: moData.formulationId,
-        ingredientCount: moData.ingredients.length,
-        ingredients: moData.ingredients.map(ing => ({
-          id: ing.ingredient_id,
-          name: ing.product_name,
-          savedWeight: ing.actual_mass,
-          status: ing.status
-        }))
-      })
-      onStartWeighing(moData)
+    } catch (lookupError) {
+      console.warn('Error checking existing MO before start:', lookupError)
+      found = null
+    }
+
+    if (found?.isRejected) {
+      setError('MO ini telah ditolak (REJECT) karena melebihi toleransi. Mohon minta persetujuan QC terlebih dahulu sebelum melanjutkan proses penimbangan. Silakan hubungi QC Officer untuk melakukan approval.')
+      setLoading(false)
       return
     }
-    
-    // New work order flow
+
+    if (found?.canResume) {
+      if (!found.ingredients.length) {
+        setError('Work order masih berjalan, tetapi daftar bahannya kosong.')
+        setLoading(false)
+        return
+      }
+      try {
+        onStartWeighing(await attachTolerancePreviews(buildResumeMoData(moRequested, found)))
+      } catch (resumeError) {
+        console.warn('Failed to resume work order:', resumeError)
+        setError('Gagal memuat progress work order')
+      } finally {
+        setLoading(false)
+      }
+      return
+    }
+
+    setLoading(false)
+
     if (!moNumber || !skuInput || !quantity) {
       setError('Lengkapi semua field')
       return
     }
     try {
       setLoading(true)
-      // Cari formulasi berdasarkan input SKU/Name/Code
       const searchResp = await api.request(`/formulations/search?q=${encodeURIComponent(skuInput)}`)
       const list = (searchResp && searchResp.data) || []
       if (!list.length) {
         setError('Formulasi tidak ditemukan dari input SKU')
         return
       }
-      const q = (skuInput || '').toLowerCase()
-      const best =
-        list.find(f => (f.formulation_name || '').toLowerCase() === q) ||
-        list.find(f => (f.formulation_code || '').toLowerCase() === q) ||
-        list.find(f => (f.sku || '').toLowerCase() === q) ||
-        list.find(f => (f.formulation_name || '').toLowerCase().includes(q) || (f.formulation_code || '').toLowerCase().includes(q) || (f.sku || '').toLowerCase().includes(q)) ||
-        list[0]
+      const best = pickBestFormulation(list, skuInput)
+      const scalingMode = best.scaling_mode || 'per_1000g'
+      const totalMass = parseFloat(best.total_mass) || 0
+      const inputQty = parseFloat(quantity) || 0
+      const scaling = computeMoScaling({
+        scalingMode,
+        totalMass,
+        inputQuantity: inputQty
+      })
 
       const ingredientsResp = await api.getFormulationIngredients(best.id)
-      
-      // Calculate scaling factor based on quantity
-      // Formula in database is for 1000g base, so scale proportionally
-      const baseQuantity = 1000 // gram (base formula)
-      const targetQuantity = parseFloat(quantity) || 1000
-      const scalingFactor = targetQuantity / baseQuantity
-      
-      console.log(`📏 Scaling formula: Base=${baseQuantity}g, Target=${targetQuantity}g, Factor=${scalingFactor}x`)
-      
+
+      console.log(
+        `📏 Scaling formula: mode=${scalingMode}, base=${scaling.baseQuantity}, ` +
+        `input=${inputQty}${scalingMode === SCALING_MODE_PER_UNIT ? ' PCS' : 'g'}, ` +
+        `total=${scaling.plannedQuantityGrams}g, factor=${scaling.scalingFactor}x`
+      )
+
       const moData = {
         moNumber,
-        skuName: best.formulation_name || best.product_name || best.name || skuInput,
-        quantity,
-        formulationId: best.id,
-        formulationCode: best.formulation_code || best.product_code || best.code || skuInput,
-        baseQuantity, // Store base quantity for reference
-        scalingFactor, // Store scaling factor for reference
-        ingredients: ((ingredientsResp && ingredientsResp.data) || ingredientsResp || []).map(it => {
-          const baseTargetMass = it.target_mass || it.mass || it.target || 0
-          const scaledTargetMass = baseTargetMass * scalingFactor
-          
-          console.log(`  📦 ${it.product_name || it.ingredient_name || it.name}: ${baseTargetMass}g × ${scalingFactor} = ${scaledTargetMass.toFixed(2)}g`)
-          
-          return {
-            formulation_ingredient_id: it.id || it.ingredient_id,
-            product_code: it.product_code || it.ingredient_code || it.code,
-            product_name: it.product_name || it.ingredient_name || it.name,
-            target_mass: scaledTargetMass, // Use scaled target mass
-            base_target_mass: baseTargetMass // Keep original for reference
-          }
-        }),
+        ...buildMoData(best, (ingredientsResp && ingredientsResp.data) || ingredientsResp || [], scaling, inputQty),
         isResume: false
       }
-      onStartWeighing(moData)
+      onStartWeighing(await attachTolerancePreviews(moData))
     } catch (e) {
       setError('Gagal mengambil bahan formulasi')
     } finally {
       setLoading(false)
     }
   }
+
+  const isPerUnit = formulationMeta?.scaling_mode === SCALING_MODE_PER_UNIT
+  const unitTotalMass = parseFloat(formulationMeta?.total_mass) || 0
+  const qtyNum = parseFloat(quantity) || 0
+  const previewTotalGrams = isPerUnit && qtyNum > 0 ? qtyNum * unitTotalMass : qtyNum
+  const previewScaling = isPerUnit && qtyNum > 0
+    ? computeMoScaling({ scalingMode: SCALING_MODE_PER_UNIT, totalMass: unitTotalMass, inputQuantity: qtyNum })
+    : null
 
   if (!isOpen) return null
 
@@ -275,15 +381,16 @@ const MOScanModal = ({ isOpen, onClose, onStartWeighing }) => {
         <form onSubmit={handleSubmit} className="modal-body" style={{ padding: 16 }}>
           <div className="form-row" style={{ display: 'grid', gap: 6, marginBottom: 12 }}>
             <label>No. MO {checkingMO && <span style={{ fontSize: '11px', color: '#9ca3af' }}>(Checking...)</span>}</label>
-            <input 
-              value={moNumber} 
-              onChange={e => setMoNumber(e.target.value)} 
-              placeholder="Masukkan nomor MO" 
+            <input
+              type="text"
+              value={moNumber}
+              onChange={(e) => setMoNumber(e.target.value)}
+              placeholder="Masukkan atau scan nomor MO"
               autoFocus
+              autoComplete="off"
             />
           </div>
           
-          {/* Show rejected MO warning if found */}
           {existingWorkOrder && existingWorkOrder.isRejected && !existingWorkOrder.isReactivated && (
             <div style={{ 
               padding: '12px', 
@@ -304,15 +411,11 @@ const MOScanModal = ({ isOpen, onClose, onStartWeighing }) => {
                 <div style={{ fontWeight: '600', marginBottom: '4px' }}>
                   ⚠️ Tidak dapat melanjutkan tanpa persetujuan QC Officer.
                 </div>
-                <div style={{ fontSize: '11px', color: '#7f1d1d', marginTop: '8px', padding: '6px', backgroundColor: '#fee2e2', borderRadius: '4px' }}>
-                  Silakan hubungi QC Officer untuk melakukan approval dan reactivate MO ini terlebih dahulu.
-                </div>
               </div>
             </div>
           )}
           
-          {/* Show existing work order info if found */}
-          {existingWorkOrder && existingWorkOrder.hasProgress && (
+          {existingWorkOrder && existingWorkOrder.canResume && (
             <div style={{ 
               padding: '12px', 
               marginBottom: '12px', 
@@ -323,44 +426,75 @@ const MOScanModal = ({ isOpen, onClose, onStartWeighing }) => {
             }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '8px' }}>
                 <span style={{ fontSize: '16px' }}>📋</span>
-                <strong style={{ color: '#1e40af', fontSize: '14px' }}>Work Order Ditemukan - Resume Progress</strong>
+                <strong style={{ color: '#1e40af', fontSize: '14px' }}>
+                  {existingWorkOrder.workOrder?.status === 'in_progress'
+                    ? 'Work Order Masih Berjalan'
+                    : 'Work Order Ditemukan - Resume Progress'}
+                </strong>
               </div>
               <div style={{ fontSize: '12px', color: '#1e40af', marginLeft: '24px' }}>
+                <div>{existingWorkOrder.workOrder?.formulation_name || 'Formulasi tersimpan'} · {existingWorkOrder.workOrder?.planned_quantity || '-'} g</div>
                 <div>Progress: {existingWorkOrder.completedIngredients}/{existingWorkOrder.totalIngredients} bahan selesai</div>
                 <div>In Progress: {existingWorkOrder.inProgressIngredients} bahan sedang ditimbang</div>
-                {existingWorkOrder.isReactivated && (
-                  <div style={{ marginTop: '6px', padding: '4px 8px', backgroundColor: '#dcfce7', borderRadius: '4px', color: '#166534', fontSize: '11px', fontWeight: '600' }}>
-                    ✅ Telah di-approve oleh QC Officer
-                  </div>
-                )}
-                <div style={{ marginTop: '6px', fontWeight: '600' }}>
-                  Klik "Mulai Penimbangan" untuk melanjutkan dari progress sebelumnya
-                </div>
+                <div style={{ marginTop: 4 }}>SKU dan quantity di bawah tidak dipakai. Penimbangan dilanjutkan dari berat yang sudah tersimpan.</div>
               </div>
             </div>
           )}
           <div className="form-row" style={{ display: 'grid', gap: 6, marginBottom: 12 }}>
             <label>Nama SKU / Product Code</label>
             <div style={{ display: 'flex', gap: 8 }}>
-              <input style={{ flex: 1 }} value={skuInput} onChange={e => setSkuInput(e.target.value)} placeholder="Nama SKU atau kode" />
-              <button type="button" className="btn btn-secondary" onClick={searchFormulations} disabled={!skuInput || loading}>Cari</button>
+              <input
+                type="text"
+                style={{ flex: 1 }}
+                value={skuInput}
+                onChange={(e) => setSkuInput(e.target.value)}
+                placeholder="Masukkan atau scan SKU / kode produk"
+                autoComplete="off"
+                disabled={Boolean(existingWorkOrder?.canResume)}
+              />
+              <button type="button" className="btn btn-secondary" onClick={searchFormulations} disabled={!skuInput || loading || Boolean(existingWorkOrder?.canResume)}>Cari</button>
             </div>
+            {isPerUnit && unitTotalMass > 0 && (
+              <div style={{ fontSize: '11px', color: '#6366f1' }}>
+                Mode per botol: 1 PCS = {unitTotalMass.toFixed(2)}g
+              </div>
+            )}
           </div>
           <div className="form-row" style={{ display: 'grid', gap: 6, marginBottom: 12 }}>
-            <label>Quantity (gram) <span style={{ fontSize: '11px', color: '#666', fontWeight: 'normal' }}>- Formula base: 1000g</span></label>
-            <input 
-              type="number" 
-              step="0.01" 
-              value={quantity} 
-              onChange={e => setQuantity(e.target.value)} 
-              placeholder="Contoh: 2000 untuk 2x lipat" 
+            <label>
+              {isPerUnit ? 'Quantity (PCS)' : 'Quantity (gram)'}
+              <span style={{ fontSize: '11px', color: '#666', fontWeight: 'normal' }}>
+                {isPerUnit
+                  ? ` — 1 botol = ${unitTotalMass.toFixed(2)}g`
+                  : ' — Formula base: 1000g'}
+              </span>
+            </label>
+            <input
+              type="text"
+              inputMode="decimal"
+              value={quantity}
+              onChange={(e) => setQuantity(e.target.value)}
+              disabled={Boolean(existingWorkOrder?.canResume)}
+              placeholder={
+                isPerUnit
+                  ? 'Masukkan atau scan quantity (PCS)'
+                  : 'Masukkan atau scan quantity (gram)'
+              }
+              autoComplete="off"
             />
-            {quantity && parseFloat(quantity) > 0 && (
+            {qtyNum > 0 && (
               <div style={{ fontSize: '11px', color: '#059669', marginTop: '4px', padding: '6px 8px', backgroundColor: '#d1fae5', borderRadius: '4px' }}>
-                📏 Scaling Factor: <strong>{(parseFloat(quantity) / 1000).toFixed(2)}x</strong> 
-                {parseFloat(quantity) === 1000 && ' (base formula)'}
-                {parseFloat(quantity) === 2000 && ' (2x lipat)'}
-                {parseFloat(quantity) === 500 && ' (½ lipat)'}
+                {isPerUnit && previewScaling ? (
+                  <>
+                    📏 <strong>{qtyNum}</strong> PCS × {unitTotalMass.toFixed(2)}g = <strong>{previewTotalGrams.toFixed(2)}g</strong> total
+                    {' '}(factor {previewScaling.scalingFactor.toFixed(2)}×)
+                  </>
+                ) : (
+                  <>
+                    📏 Scaling Factor: <strong>{(qtyNum / 1000).toFixed(2)}x</strong>
+                    {qtyNum === 1000 && ' (base formula)'}
+                  </>
+                )}
               </div>
             )}
           </div>
@@ -368,16 +502,18 @@ const MOScanModal = ({ isOpen, onClose, onStartWeighing }) => {
           {loading && <div className="info-subtext">Memuat...</div>}
           {error && <div className="error-text" style={{ color: '#ef4444' }}>{error}</div>}
 
-          {/* Pemilihan manual dihilangkan: sistem otomatis memilih formulasi berdasarkan input */}
-
           <div className="modal-footer" style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 4 }}>
             <button type="button" className="btn" onClick={onClose}>Batal</button>
             <button 
               type="submit" 
               className="btn btn-primary" 
-              disabled={loading || (existingWorkOrder && existingWorkOrder.isRejected && !existingWorkOrder.isReactivated)}
+              disabled={
+                loading ||
+                checkingMO ||
+                (existingWorkOrder && existingWorkOrder.isRejected && !existingWorkOrder.isReactivated)
+              }
             >
-              Mulai Penimbangan
+              {existingWorkOrder?.canResume ? 'Lanjutkan Penimbangan' : 'Mulai Penimbangan'}
             </button>
           </div>
         </form>
@@ -387,5 +523,3 @@ const MOScanModal = ({ isOpen, onClose, onStartWeighing }) => {
 }
 
 export default MOScanModal
-
-

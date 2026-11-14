@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react'
+import { getScalingBaseQuantity } from './utils/scaling'
 import Login from './components/Login'
 import Header from './components/Header'
 import LeftPanel from './components/LeftPanel'
@@ -19,7 +20,9 @@ import WeighingReceiverDetail from './components/weighing-receiver/WeighingRecei
 import MOScanModal from './components/MOScanModal'
 import { getCurrentTime } from './utils/timeUtils.js'
 import { AlertModalProvider, useAlert } from './utils/alertModal'
+import { canAccessPage } from './utils/rolePermissions'
 import { createDefaultLabelTemplate, mergeTemplateWithDefaults } from './utils/labelTemplates'
+import { getToleranceRangeFromIngredient } from './utils/weighingTolerance.js'
 // historyStore removed; history now persisted in PostgreSQL via server endpoints
 
 const BASE_DEFAULT_LABEL_TEMPLATE = createDefaultLabelTemplate({
@@ -459,7 +462,7 @@ function AppContent() {
               // CRITICAL: If weight is 0 or near 0 and not actively weighing, reset currentWeight
               // This ensures that when user removes weight from scale, frontend resets even if previous weight was stored
               // scaleDisplayWeight already updated above
-              if (Math.abs(weightGrams) < 0.5 && (!isWeighingActive || !selectedIngredient)) {
+              if (Math.abs(weightGrams) < 0.5 && (!isWeighingActiveRef.current || !selectedIngredientRef.current)) {
                 if (currentWeightRef.current > 0) {
                   console.log('🔄 Scale reading is 0, resetting currentWeight from', currentWeightRef.current, 'to 0 (WebSocket)')
                   setCurrentWeight(0)
@@ -474,47 +477,20 @@ function AppContent() {
                 // Don't return here - continue to update scaleDisplayWeight below
               }
               
-              // CRITICAL: Validate weight range to catch parsing errors
-              // Check for suspiciously small values when we expect larger ones
-              // Also check for values that seem truncated (e.g., 442 -> 42.2)
-              // CRITICAL: Only block if we're confident it's a parsing error, not a real weight change
-              if (currentWeight > 100 && weightGrams > 0) {
-                // If previous weight was large and new weight is much smaller, it might be truncated
-                const ratio = weightGrams / currentWeight;
+              // Truncation detection: use REF (not stale closure) for comparison.
+              // Skip for near-zero readings (< 3g) — those are physical weight removal, not parse errors.
+              const prevWeight = currentWeightRef.current
+              if (prevWeight > 100 && weightGrams >= 3) {
+                const ratio = weightGrams / prevWeight;
                 
-                // CRITICAL: Log raw message for debugging parsing errors
-                console.log('🔍 Weight validation check:', {
-                  previousWeight: currentWeight,
-                  newWeight: weightGrams,
-                  ratio: ratio.toFixed(4),
-                  rawMessage: message.raw || message,
-                  unit: message.unit || 'g'
-                });
-                
-                // CRITICAL: More aggressive validation for truncation
-                // If new weight is less than 30% of previous AND previous was > 100g, it's likely truncated
-                // This catches cases like:
-                // - 138.3 -> 8.3 (ratio 0.06 = 6%)
-                // - 138.3 -> 38.3 (ratio 0.277 = 27.7%, truncation of first digit)
-                // - 166 -> 8.3 (ratio 0.05 = 5%)
-                // - 720 -> 9.9 (ratio 0.014 = 1.4%)
-                if (ratio < 0.30 && currentWeight > 100) {
-                  // Get raw message string for validation
+                if (ratio < 0.30 && prevWeight > 100) {
                   const rawMessageStr = typeof message.raw === 'string' ? message.raw : (message.raw ? JSON.stringify(message.raw) : '');
                   const hasPrefix = /^(ST|US)[,:]/.test(rawMessageStr);
                   
-                  // CRITICAL: Detect truncation patterns
-                  // Pattern 1: Ratio < 6% (very likely truncation, e.g., 138 -> 8, 166 -> 8.3)
-                  // Pattern 2: Ratio < 10% AND new weight < 20g (truncation pattern)
-                  // Pattern 3: Ratio < 10% AND no prefix AND new weight < 50g (truncated data without prefix)
-                  // Pattern 4: Ratio < 10% AND new weight < 10g (very small weight, likely truncation)
-                  // Pattern 5: Ratio 20-30% AND new weight matches pattern of missing first digit (e.g., 138.3 -> 38.3)
-                  //   - Check if new weight is approximately 10x smaller (missing first digit)
-                  //   - Check if new weight digits match last digits of previous weight
                   const isMissingFirstDigit = ratio >= 0.20 && ratio < 0.30 && 
-                                            currentWeight > 100 && 
+                                            prevWeight > 100 && 
                                             weightGrams > 10 &&
-                                            Math.abs(weightGrams - (currentWeight % 100)) < 5; // Last 2 digits match
+                                            Math.abs(weightGrams - (prevWeight % 100)) < 5;
                   
                   const isLikelyTruncated = ratio < 0.06 || 
                                            (ratio < 0.10 && weightGrams < 20) ||
@@ -523,103 +499,55 @@ function AppContent() {
                                            isMissingFirstDigit;
                   
                   if (isLikelyTruncated) {
-                    console.error('❌ CRITICAL: Truncated weight detected (WebSocket):', {
-                      previousWeight: currentWeight,
+                    console.error('❌ Truncated weight detected (WebSocket):', {
+                      previousWeight: prevWeight,
                       newWeight: weightGrams,
-                      ratio: ratio.toFixed(4),
-                      rawMessage: rawMessageStr || (message.raw ? 'object' : 'missing'),
-                      hasPrefix: hasPrefix,
-                      message: message
+                      ratio: ratio.toFixed(4)
                     });
-                    // Don't update if it looks like truncation
                     return;
                   }
-                  
-                  // If ratio is 5-10% and doesn't match truncation pattern, log warning but allow
-                  console.warn('⚠️ Possible weight drop detected (WebSocket):', {
-                    previousWeight: currentWeight,
-                    newWeight: weightGrams,
-                    ratio: ratio.toFixed(4),
-                    rawMessage: rawMessageStr || (message.raw ? 'object' : 'missing'),
-                    hasPrefix: hasPrefix,
-                    message: message
-                  });
                 }
               }
               
-              // Check for suspiciously small values when we expect larger ones
-              // CRITICAL: Only block if weight is very small (< 5g) when previous was large (> 100g)
-              // This prevents blocking legitimate small weights
-              if (weightGrams > 0 && weightGrams < 5 && currentWeight > 100) {
-                console.warn('⚠️ Suspicious weight drop detected (very small value):', {
-                  previousWeight: currentWeight,
-                  newWeight: weightGrams,
-                  rawMessage: message.raw || message,
-                  message: message
-                });
-                // Don't update if the drop seems too large (likely parsing error)
-                // Only update if the change is reasonable
-                if (Math.abs(weightGrams - currentWeight) > currentWeight * 0.9) {
-                  console.warn('⚠️ Skipping weight update - suspicious drop too large');
-                  return;
-                }
-              }
-              
-              // CRITICAL: Update refs immediately to track latest weight for reset prevention
-              currentWeightRef.current = weightGrams
+              // NOTE: Do NOT update currentWeightRef here — it's updated inside the guard
+              // at line ~593. Updating it prematurely would cause the shouldUpdate check
+              // to always see change=0 (ref already has the new value).
               
               // NOTE: scaleDisplayWeight already updated at the beginning of handler (before all validations)
               // This ensures digital-weight ALWAYS shows real-time value without freeze
               
               // CRITICAL: Only update currentWeight if we're still in weighing mode to prevent fluktuasi
-              // Check conditions before updating to prevent race conditions
-              // CRITICAL: Also check refs to handle temporary state updates
-              if ((isWeighingActive || isWeighingActiveRef.current) && 
-                  (selectedIngredient || selectedIngredientRef.current)) {
-                // CRITICAL: Only update currentWeight if weight actually changed (prevent unnecessary re-renders)
-                // Since data from scale is stable, we don't need to update for every message
-                const roundedCurrent = Math.round(currentWeight * 10) / 10
-                const change = roundedWeight - roundedCurrent // Signed change (positive = increase, negative = decrease)
+              // Use REFS exclusively — closure values can be stale after save/WO switch.
+              // Refs are updated synchronously in handleSaveProgress and handleStartWeighing.
+              if (isWeighingActiveRef.current && selectedIngredientRef.current) {
+                // Derive active ingredient ID from ref (not stale closure)
+                const activeIngId = selectedIngredientRef.current.id || selectedIngredientRef.current.code
+                
+                const roundedCurrent = Math.round(currentWeightRef.current * 10) / 10
+                const change = roundedWeight - roundedCurrent
                 const absChange = Math.abs(change)
                 
-                // Update for increases of any size OR decreases >= 0.1g (lower threshold for accuracy)
-                // This ensures we track weight being added while maintaining accurate measurement display
                 const shouldUpdate = change > 0 || absChange >= 0.1
                 if (!shouldUpdate) {
-                  return // Skip update if weight hasn't changed significantly (only for very small decreases < 0.1g)
+                  return
                 }
                 
-                // CRITICAL: Use rounded value consistently to prevent jitter and inconsistencies
-                // Always use roundedWeight, not weightGrams, to ensure consistency
-                
-                // CRITICAL: Update ref immediately to prevent reset during active weighing
                 currentWeightRef.current = roundedWeight
                 
-                // Direct update without requestAnimationFrame for more responsive display
-                // Data from scale is already stable, so no need for animation frame batching
-                setCurrentWeight(roundedWeight) // Use rounded value for consistency
+                setCurrentWeight(roundedWeight)
               
-                // Batch state updates for better performance
-              // IMPORTANT: Only update the ingredient that matches currentIngredientId
-                // CRITICAL: Use multiple matching strategies to ensure correct ingredient is updated
-                // CRITICAL: Get savedWeight from recipe state (not selectedIngredient) to ensure latest value
                 setRecipe(prev => {
-                  // Find the ingredient in current recipe state to get latest savedWeight
-                  const currentIngredient = prev.find(ing => 
-                    ing.id === currentIngredientId || 
-                    ing.code === selectedIngredient?.code ||
-                    (selectedIngredient?.name && ing.name === selectedIngredient.name)
-                  )
+                  // Re-check ref inside callback — state updates may have cleared it
+                  if (!isWeighingActiveRef.current || !selectedIngredientRef.current) return prev
+                  const refIngId = selectedIngredientRef.current.id || selectedIngredientRef.current.code
                   
-                  // Use savedWeight from recipe state (which is updated after save), not from selectedIngredient
-                  const savedWeight = currentIngredient?.savedWeight || selectedIngredient?.savedWeight || 0
+                  const currentIngredient = prev.find(ing => ing.id === refIngId)
+                  
+                  const savedWeight = currentIngredient?.savedWeight || 0
                   const totalWeight = savedWeight + roundedWeight
                   
                   return prev.map(ing => {
-                    // Match by id (primary), or by code (fallback), or by name (last resort)
-                    const matches = ing.id === currentIngredientId || 
-                                   ing.code === selectedIngredient?.code ||
-                                   (selectedIngredient?.name && ing.name === selectedIngredient.name)
+                    const matches = ing.id === refIngId
                     
                     if (matches) {
                       // CRITICAL: Use savedWeight from recipe state (ing.savedWeight) which is the latest value
@@ -644,28 +572,18 @@ function AppContent() {
                 // Also update selectedIngredient state with latest values from recipe
                 // CRITICAL: Sync selectedIngredient with recipe state to ensure savedWeight is up-to-date
               setSelectedIngredient(prev => {
-                if (prev && prev.id === currentIngredientId) {
-                    // Get latest savedWeight from recipe state
-                    const latestIngredient = recipe.find(ing => 
-                      ing.id === currentIngredientId || 
-                      ing.code === prev.code ||
-                      ing.name === prev.name
-                    )
-                    const latestSavedWeight = latestIngredient?.savedWeight || prev.savedWeight || 0
-                    const latestTotalWeight = latestSavedWeight + roundedWeight
-                    
+                if (!prev || !selectedIngredientRef.current) return prev
+                const refIngId = selectedIngredientRef.current.id || selectedIngredientRef.current.code
+                if (prev.id === refIngId) {
                   return {
                     ...prev,
-                      savedWeight: latestSavedWeight,  // Use latest savedWeight from recipe state
-                      totalWeight: latestTotalWeight,
+                      savedWeight: prev.savedWeight || 0,
+                      totalWeight: (prev.savedWeight || 0) + roundedWeight,
                     currentWeight: roundedWeight
                   }
                 }
                 return prev
                 })
-              } else {
-                // If not in weighing mode, don't update to prevent fluktuasi
-                // This prevents race conditions where weight updates arrive after weighing stops
               }
             }
           } catch (e) {
@@ -923,7 +841,7 @@ function AppContent() {
             // CRITICAL: If weight is 0 or near 0 and not actively weighing, reset currentWeight
             // This ensures that when user removes weight from scale, frontend resets even if previous weight was stored
             // scaleDisplayWeight already updated above
-            if (Math.abs(weightGrams) < 0.5 && (!isWeighingActive || !selectedIngredient)) {
+            if (Math.abs(weightGrams) < 0.5 && (!isWeighingActiveRef.current || !selectedIngredientRef.current)) {
               if (currentWeightRef.current > 0) {
                 console.log('🔄 Scale reading is 0, resetting currentWeight from', currentWeightRef.current, 'to 0 (HTTP polling)')
                 setCurrentWeight(0)
@@ -938,49 +856,20 @@ function AppContent() {
                 // Don't return here - continue to update scaleDisplayWeight below
               }
             
-            // CRITICAL: Validate weight range to catch parsing errors
-            // Check for suspiciously small values when we expect larger ones
-            // Also check for values that seem truncated (e.g., 442 -> 42.2)
-            // CRITICAL: Only block if we're confident it's a parsing error, not a real weight change
-            if (currentWeight > 100 && weightGrams > 0) {
-              // If previous weight was large and new weight is much smaller, it might be truncated
-              const ratio = weightGrams / currentWeight;
+            // Truncation detection: use REF (not stale closure) for comparison.
+            // Skip for near-zero readings (< 3g) — those are physical weight removal, not parse errors.
+            const prevWeightHTTP = currentWeightRef.current
+            if (prevWeightHTTP > 100 && weightGrams >= 3) {
+              const ratio = weightGrams / prevWeightHTTP;
               
-              // CRITICAL: Log raw data for debugging parsing errors
-              // Ensure rawData is always a string for consistent logging
-              const rawDataForLog = typeof data.raw === 'string' ? data.raw : (data.raw ? JSON.stringify(data.raw) : 'missing');
-              console.log('🔍 Weight validation check (HTTP polling):', {
-                previousWeight: currentWeight,
-                newWeight: weightGrams,
-                ratio: ratio.toFixed(4),
-                rawData: rawDataForLog,
-                data: data
-              });
-              
-              // CRITICAL: More aggressive validation for truncation
-              // If new weight is less than 30% of previous AND previous was > 100g, it's likely truncated
-              // This catches cases like:
-              // - 138.3 -> 8.3 (ratio 0.06 = 6%)
-              // - 138.3 -> 38.3 (ratio 0.277 = 27.7%, truncation of first digit)
-              // - 166 -> 8.3 (ratio 0.05 = 5%)
-              // - 720 -> 9.9 (ratio 0.014 = 1.4%)
-              if (ratio < 0.30 && currentWeight > 100) {
-                // Get raw data string for validation
+              if (ratio < 0.30 && prevWeightHTTP > 100) {
                 const rawDataStr = typeof data.raw === 'string' ? data.raw : (data.raw ? JSON.stringify(data.raw) : '');
                 const hasPrefix = /^(ST|US)[,:]/.test(rawDataStr);
                 
-                // CRITICAL: Detect truncation patterns
-                // Pattern 1: Ratio < 6% (very likely truncation, e.g., 138 -> 8, 166 -> 8.3)
-                // Pattern 2: Ratio < 10% AND new weight < 20g (truncation pattern)
-                // Pattern 3: Ratio < 10% AND no prefix AND new weight < 50g (truncated data without prefix)
-                // Pattern 4: Ratio < 10% AND new weight < 10g (very small weight, likely truncation)
-                // Pattern 5: Ratio 20-30% AND new weight matches pattern of missing first digit (e.g., 138.3 -> 38.3)
-                //   - Check if new weight is approximately 10x smaller (missing first digit)
-                //   - Check if new weight digits match last digits of previous weight
                 const isMissingFirstDigit = ratio >= 0.20 && ratio < 0.30 && 
-                                          currentWeight > 100 && 
+                                          prevWeightHTTP > 100 && 
                                           weightGrams > 10 &&
-                                          Math.abs(weightGrams - (currentWeight % 100)) < 5; // Last 2 digits match
+                                          Math.abs(weightGrams - (prevWeightHTTP % 100)) < 5;
                 
                 const isLikelyTruncated = ratio < 0.06 || 
                                          (ratio < 0.10 && weightGrams < 20) ||
@@ -989,97 +878,47 @@ function AppContent() {
                                          isMissingFirstDigit;
                 
                 if (isLikelyTruncated) {
-                  console.error('❌ CRITICAL: Truncated weight detected (HTTP polling):', {
-                    previousWeight: currentWeight,
+                  console.error('❌ Truncated weight detected (HTTP):', {
+                    previousWeight: prevWeightHTTP,
                     newWeight: weightGrams,
-                    ratio: ratio.toFixed(4),
-                    rawData: rawDataStr || (data.raw ? 'object' : 'missing'),
-                    hasPrefix: hasPrefix,
-                    data: data
+                    ratio: ratio.toFixed(4)
                   });
-                  // Don't update if it looks like truncation
                   return;
                 }
-                
-                // If ratio is 5-10% and doesn't match truncation pattern, log warning but allow
-                console.warn('⚠️ Possible weight drop detected (HTTP polling):', {
-                  previousWeight: currentWeight,
-                  newWeight: weightGrams,
-                  ratio: ratio.toFixed(4),
-                  rawData: rawDataStr || (data.raw ? 'object' : 'missing'),
-                  hasPrefix: hasPrefix,
-                  data: data
-                });
               }
             }
             
-            // Check for suspiciously small values when we expect larger ones
-            // CRITICAL: Only block if weight is very small (< 5g) when previous was large (> 100g)
-            // This prevents blocking legitimate small weights
-            if (weightGrams > 0 && weightGrams < 5 && currentWeight > 100) {
-              console.warn('⚠️ Suspicious weight drop detected (HTTP polling, very small value):', {
-                previousWeight: currentWeight,
-                newWeight: weightGrams,
-                rawData: data.raw || data,
-                data: data
-              });
-              // Don't update if the drop seems too large (likely parsing error)
-              // Only update if the change is reasonable
-              if (Math.abs(weightGrams - currentWeight) > currentWeight * 0.9) {
-                console.warn('⚠️ Skipping weight update (HTTP polling) - suspicious drop too large');
-                return;
-              }
-            }
+            // NOTE: Do NOT update currentWeightRef here — it's updated inside the guard.
+            // Updating prematurely causes shouldUpdate to always see change=0.
             
-            // CRITICAL: Update refs immediately to track latest weight for reset prevention
-            currentWeightRef.current = weightGrams
-            
-            // NOTE: scaleDisplayWeight already updated at the beginning of handler (before all validations)
-            // This ensures digital-weight ALWAYS shows real-time value without freeze
-            
-            // CRITICAL: Only update currentWeight if we're still in weighing mode to prevent fluktuasi
-            // Check conditions before updating to prevent race conditions
-            // CRITICAL: Also check refs to handle temporary state updates
-            if ((isWeighingActive || isWeighingActiveRef.current) && 
-                (selectedIngredient || selectedIngredientRef.current)) {
-              // CRITICAL: Only update currentWeight if weight actually changed (prevent unnecessary re-renders)
-              const roundedCurrent = Math.round(currentWeight * 10) / 10
-              const change = roundedWeight - roundedCurrent // Signed change (positive = increase, negative = decrease)
+            // Use REFS exclusively — closure values can be stale after save/WO switch.
+            if (isWeighingActiveRef.current && selectedIngredientRef.current) {
+              const activeIngId = selectedIngredientRef.current.id || selectedIngredientRef.current.code
+              
+              const roundedCurrent = Math.round(currentWeightRef.current * 10) / 10
+              const change = roundedWeight - roundedCurrent
               const absChange = Math.abs(change)
               
-              // Update for increases of any size OR decreases >= 0.1g (lower threshold for accuracy)
-              // This ensures we track weight being added while maintaining accurate measurement display
               const shouldUpdate = change > 0 || absChange >= 0.1
               if (!shouldUpdate) {
-                return // Skip update if weight hasn't changed significantly (only for very small decreases < 0.1g)
+                return
               }
               
-              // CRITICAL: Update ref immediately to prevent reset during active weighing
               currentWeightRef.current = roundedWeight
               
-              // Direct update without requestAnimationFrame for more responsive display
-              // Data from scale is already stable, so no need for animation frame batching
-              // Use rounded value to prevent floating point precision jitter
               setCurrentWeight(roundedWeight)
             
-              // Batch state updates for better performance
               setRecipe(prev => {
-                // Find the ingredient in current recipe state to get latest savedWeight
-                const currentIngredient = prev.find(ing => 
-                  ing.id === currentIngredientId || 
-                  ing.code === selectedIngredient?.code ||
-                  (selectedIngredient?.name && ing.name === selectedIngredient.name)
-                )
+                if (!isWeighingActiveRef.current || !selectedIngredientRef.current) return prev
+                const refIngId = selectedIngredientRef.current.id || selectedIngredientRef.current.code
                 
-                // Use savedWeight from recipe state (which is updated after save), not from selectedIngredient
-                const savedWeight = currentIngredient?.savedWeight || selectedIngredient?.savedWeight || 0
+                const currentIngredient = prev.find(ing => ing.id === refIngId)
+                
+                const savedWeight = currentIngredient?.savedWeight || 0
                   const totalWeight = savedWeight + roundedWeight
                 
                 return prev.map(ing => {
-                  // Match by id (primary), or by code (fallback), or by name (last resort)
-                  const matches = ing.id === currentIngredientId || 
-                                 ing.code === selectedIngredient?.code ||
-                                 (selectedIngredient?.name && ing.name === selectedIngredient.name)
+                  const matches = ing.id === refIngId
                   
                   if (matches) {
                     // CRITICAL: Use savedWeight from recipe state (ing.savedWeight) which is the latest value
@@ -1104,28 +943,18 @@ function AppContent() {
               // Also update selectedIngredient state with latest values from recipe
               // CRITICAL: Sync selectedIngredient with recipe state to ensure savedWeight is up-to-date
             setSelectedIngredient(prev => {
-              if (prev && prev.id === currentIngredientId) {
-                  // Get latest savedWeight from recipe state
-                  const latestIngredient = recipe.find(ing => 
-                    ing.id === currentIngredientId || 
-                    ing.code === prev.code ||
-                    ing.name === prev.name
-                  )
-                  const latestSavedWeight = latestIngredient?.savedWeight || prev.savedWeight || 0
-                  const latestTotalWeight = latestSavedWeight + roundedWeight
-                  
+              if (!prev || !selectedIngredientRef.current) return prev
+              const refIngId = selectedIngredientRef.current.id || selectedIngredientRef.current.code
+              if (prev.id === refIngId) {
                 return {
                   ...prev,
-                    savedWeight: latestSavedWeight,  // Use latest savedWeight from recipe state
-                    totalWeight: latestTotalWeight,
+                    savedWeight: prev.savedWeight || 0,
+                    totalWeight: (prev.savedWeight || 0) + roundedWeight,
                   currentWeight: roundedWeight
                 }
               }
               return prev
               })
-            } else {
-              // If not in weighing mode, don't update to prevent fluktuasi
-              // This prevents race conditions where weight updates arrive after weighing stops
             }
           }
         } catch (e) {
@@ -1308,23 +1137,15 @@ function AppContent() {
       const currentTotalWeight = currentSavedWeight + currentReadingValue
       const currentTargetWeight = parseFloat(activeIngredient.targetWeight || 0) || 0
       
-      // Calculate tolerance range with same logic as main check
-      const currentIngredientToleranceMin = activeIngredient.toleranceMin !== undefined && activeIngredient.toleranceMin !== null
-        ? parseFloat(activeIngredient.toleranceMin)
-        : null
-      const currentIngredientToleranceMax = activeIngredient.toleranceMax !== undefined && activeIngredient.toleranceMax !== null
-        ? parseFloat(activeIngredient.toleranceMax)
-        : null
-      const currentHasValidTolerance = currentIngredientToleranceMin !== null && 
-                                        currentIngredientToleranceMax !== null && 
-                                        currentIngredientToleranceMax > currentIngredientToleranceMin
-      
-      const currentToleranceMin = currentHasValidTolerance 
-        ? currentIngredientToleranceMin 
-        : Math.max(0, currentTargetWeight - 3)
-      const currentToleranceMax = currentHasValidTolerance 
-        ? currentIngredientToleranceMax 
-        : currentTargetWeight + 3
+      const {
+        toleranceMin: currentToleranceMin,
+        toleranceMax: currentToleranceMax,
+        hasValidTolerance: currentHasValidTolerance
+      } = getToleranceRangeFromIngredient(activeIngredient)
+
+      if (!currentHasValidTolerance) {
+        return
+      }
       const stillInRange = currentTotalWeight >= currentToleranceMin && currentTotalWeight <= currentToleranceMax
       
       // If weight goes out of range during counter, stop counter immediately
@@ -1391,25 +1212,21 @@ function AppContent() {
     
     // Get target weight and tolerance range
       const targetWeight = parseFloat(activeIngredient.targetWeight || 0) || 0
-    // Calculate tolerance range: use ingredient tolerance if valid, otherwise use default ±3g
-    const ingredientToleranceMin = activeIngredient.toleranceMin !== undefined && activeIngredient.toleranceMin !== null
-        ? parseFloat(activeIngredient.toleranceMin)
-      : null
-    const ingredientToleranceMax = activeIngredient.toleranceMax !== undefined && activeIngredient.toleranceMax !== null
-        ? parseFloat(activeIngredient.toleranceMax)
-      : null
-    
-    // Use ingredient tolerance if valid (both min and max are defined and max > min), otherwise use default ±3g
-    const hasValidTolerance = ingredientToleranceMin !== null && 
-                               ingredientToleranceMax !== null && 
-                               ingredientToleranceMax > ingredientToleranceMin
-    
-    const toleranceMin = hasValidTolerance 
-      ? ingredientToleranceMin 
-      : Math.max(0, targetWeight - 3)
-    const toleranceMax = hasValidTolerance 
-      ? ingredientToleranceMax 
-        : targetWeight + 3
+    const {
+      toleranceMin,
+      toleranceMax,
+      hasValidTolerance
+    } = getToleranceRangeFromIngredient(activeIngredient)
+
+    if (!hasValidTolerance) {
+      if (currentReading > 0 && !isCounterRunning) {
+        console.warn('⚠️ Autosave blocked: toleransi belum dikonfigurasi (band tidak ditemukan)', {
+          ingredient: activeIngredient.name || activeIngredient.id,
+          targetWeight
+        })
+      }
+      return
+    }
     
     // Check if weight is in target range
       const inRange = totalWeight >= toleranceMin && totalWeight <= toleranceMax
@@ -1492,23 +1309,15 @@ function AppContent() {
       const sampleTotalWeight = sampleSavedWeight + sampleCurrentReading
       const sampleTargetWeight = parseFloat(latestSelectedIngredient.targetWeight || 0) || 0
       
-      // Calculate tolerance range with same logic (check if valid, otherwise use default ±3g)
-      const sampleIngredientToleranceMin = latestSelectedIngredient.toleranceMin !== undefined && latestSelectedIngredient.toleranceMin !== null
-        ? parseFloat(latestSelectedIngredient.toleranceMin)
-        : null
-      const sampleIngredientToleranceMax = latestSelectedIngredient.toleranceMax !== undefined && latestSelectedIngredient.toleranceMax !== null
-        ? parseFloat(latestSelectedIngredient.toleranceMax)
-        : null
-      const sampleHasValidTolerance = sampleIngredientToleranceMin !== null && 
-                                        sampleIngredientToleranceMax !== null && 
-                                        sampleIngredientToleranceMax > sampleIngredientToleranceMin
-      
-      const sampleToleranceMin = sampleHasValidTolerance 
-        ? sampleIngredientToleranceMin 
-        : Math.max(0, sampleTargetWeight - 3)
-      const sampleToleranceMax = sampleHasValidTolerance 
-        ? sampleIngredientToleranceMax 
-        : sampleTargetWeight + 3
+      const {
+        toleranceMin: sampleToleranceMin,
+        toleranceMax: sampleToleranceMax,
+        hasValidTolerance: sampleHasValidTolerance
+      } = getToleranceRangeFromIngredient(latestSelectedIngredient)
+
+      if (!sampleHasValidTolerance) {
+        return
+      }
       const sampleInRange = sampleTotalWeight >= sampleToleranceMin && sampleTotalWeight <= sampleToleranceMax
       
       // Add sample to state for tracking
@@ -1654,23 +1463,15 @@ function AppContent() {
                 
                 // Check if weight is still in range - use same tolerance logic
                 const finalTargetWeight = parseFloat(latestSelectedIngredient.targetWeight || 0) || 0
-                const finalIngredientToleranceMin = latestSelectedIngredient.toleranceMin !== undefined && latestSelectedIngredient.toleranceMin !== null
-                    ? parseFloat(latestSelectedIngredient.toleranceMin)
-                  : null
-                const finalIngredientToleranceMax = latestSelectedIngredient.toleranceMax !== undefined && latestSelectedIngredient.toleranceMax !== null
-                    ? parseFloat(latestSelectedIngredient.toleranceMax)
-                  : null
-                const finalHasValidTolerance = finalIngredientToleranceMin !== null && 
-                                                 finalIngredientToleranceMax !== null && 
-                                                 finalIngredientToleranceMax > finalIngredientToleranceMin
-                
-                const finalToleranceMin = finalHasValidTolerance 
-                  ? finalIngredientToleranceMin 
-                  : Math.max(0, finalTargetWeight - 3)
-                const finalToleranceMax = finalHasValidTolerance 
-                  ? finalIngredientToleranceMax 
-                  : finalTargetWeight + 3
-                const stillInRange = currentTotalWeight >= finalToleranceMin && currentTotalWeight <= finalToleranceMax
+                const {
+                  toleranceMin: finalToleranceMin,
+                  toleranceMax: finalToleranceMax,
+                  hasValidTolerance: finalHasValidTolerance
+                } = getToleranceRangeFromIngredient(latestSelectedIngredient)
+
+                const stillInRange = finalHasValidTolerance &&
+                  currentTotalWeight >= finalToleranceMin &&
+                  currentTotalWeight <= finalToleranceMax
                 
                 shouldSave = stillInRange
                 
@@ -1939,12 +1740,25 @@ function AppContent() {
           return
         }
 
+        // CRITICAL: Cancel any in-flight post-save refresh from previous WO
+        if (postSaveAbortRef.current) {
+          postSaveAbortRef.current.abort()
+          postSaveAbortRef.current = null
+        }
+        // CRITICAL: Immediately reset weighing refs so WebSocket/HTTP handlers
+        // stop writing scale readings from the previous WO.
+        selectedIngredientRef.current = null;
+        isWeighingActiveRef.current = false;
+        currentWeightRef.current = 0;
+        
         const wo = payload.data.workOrder
         const ingredients = payload.data.ingredients || []
+        const scalingMode = wo.scaling_mode || 'per_1000g'
         const orderQty = wo.planned_quantity !== null && wo.planned_quantity !== undefined
           ? parseFloat(wo.planned_quantity)
           : 0
-        const scalingFactor = orderQty ? (orderQty / 1000) : 1
+        const baseQty = getScalingBaseQuantity(scalingMode, wo.formulation_total_mass)
+        const scalingFactor = orderQty && baseQty > 0 ? (orderQty / baseQty) : 1
         const normalizedWorkOrder = {
           id: wo.id,
           workOrder: wo.work_order_number,
@@ -1954,8 +1768,11 @@ function AppContent() {
           formulationName: wo.formulation_name || '',
           formulationCode: wo.formulation_code || '',
           orderQty,
+          plannedUnits: wo.planned_units != null ? parseFloat(wo.planned_units) : null,
           plannedQuantity: orderQty,
+          scalingMode,
           scalingFactor,
+          baseQuantity: baseQty,
           status: wo.status,
           createdAt: wo.created_at,
           completedAt: wo.completed_at
@@ -2031,54 +1848,66 @@ function AppContent() {
     // OPTIMIZED: Set ingredient immediately to start zero check polling without delay
     // Load saved weight from recipe state first (fast, synchronous)
     let savedWeight = ingredient.savedWeight || ingredient.totalWeight || ingredient.actualWeight || 0;
-    
-    // Load saved weight and tracking data from ingredient (use recipe state data first)
-    const ingredientWithSaved = {
-      ...ingredient,
-      savedWeight: savedWeight,
-      totalWeight: savedWeight, // Start with saved weight
-      currentWeight: 0, // Reset current reading for new measurement
-      // Preserve tracking fields if available
-      progressPercentage: ingredient.progressPercentage || 0,
-      remainingWeight: ingredient.remainingWeight || (ingredient.targetWeight - savedWeight),
-      isWithinTolerance: ingredient.isWithinTolerance,
-      toleranceMin: ingredient.toleranceMin,
-      toleranceMax: ingredient.toleranceMax,
-      weighingStartedAt: ingredient.weighingStartedAt,
-      weighingUpdatedAt: ingredient.weighingUpdatedAt,
-      weighingCompletedAt: ingredient.weighingCompletedAt,
-      sessionNumber: ingredient.sessionNumber || null // CRITICAL: Preserve session number for this ingredient
-    };
-    
-    // CRITICAL: Update all states in correct order to prevent race condition
-    // React 18 will batch these updates automatically
-    // 1. First reset weighing state and currentWeight
-    setIsWeighingActive(false); // Stop weighing for previous ingredient
-    setCurrentWeight(0); // Reset currentWeight to 0 when switching ingredients
-    
-    // 2. Then update recipe state
-    setRecipe(prev => prev.map(ing => {
-      if (ing.id === ingredient.id) {
-        // Update the selected ingredient with saved weight
-        return {
-          ...ing,
-          savedWeight: savedWeight,
-          totalWeight: savedWeight,
-          currentWeight: 0 // Reset current reading for new measurement
-        };
-      } else {
-        // Reset currentWeight for all other ingredients to prevent cross-contamination
+
+    // CRITICAL: Update refs FIRST (synchronous) so WebSocket/HTTP handlers
+    // immediately stop writing scale readings to the old ingredient.
+    isWeighingActiveRef.current = false;
+    currentWeightRef.current = 0;
+
+    // Then update React state (async, batched by React 18)
+    setIsWeighingActive(false);
+    setCurrentWeight(0);
+
+    let ingredientWithSaved = null
+
+    // Merge tolerance from recipe row so RightPanel/autosave always see template bounds
+    setRecipe(prev => {
+      const match = prev.find(
+        ing =>
+          ing.id === ingredient.id ||
+          (ingredient.code && ing.code === ingredient.code)
+      )
+      const toleranceMin = ingredient.toleranceMin ?? match?.toleranceMin ?? null
+      const toleranceMax = ingredient.toleranceMax ?? match?.toleranceMax ?? null
+      ingredientWithSaved = {
+        ...(match || ingredient),
+        ...ingredient,
+        savedWeight,
+        totalWeight: savedWeight,
+        currentWeight: 0,
+        progressPercentage: ingredient.progressPercentage ?? match?.progressPercentage ?? 0,
+        remainingWeight:
+          ingredient.remainingWeight ??
+          match?.remainingWeight ??
+          (ingredient.targetWeight - savedWeight),
+        isWithinTolerance: ingredient.isWithinTolerance ?? match?.isWithinTolerance,
+        toleranceMin,
+        toleranceMax,
+        weighingStartedAt: ingredient.weighingStartedAt ?? match?.weighingStartedAt,
+        weighingUpdatedAt: ingredient.weighingUpdatedAt ?? match?.weighingUpdatedAt,
+        weighingCompletedAt: ingredient.weighingCompletedAt ?? match?.weighingCompletedAt,
+        sessionNumber: ingredient.sessionNumber ?? match?.sessionNumber ?? null
+      }
+
+      return prev.map(ing => {
+        if (ing.id === ingredient.id) {
+          return {
+            ...ing,
+            savedWeight,
+            totalWeight: savedWeight,
+            currentWeight: 0,
+            toleranceMin,
+            toleranceMax
+          }
+        }
         return {
           ...ing,
           currentWeight: 0,
-          // Preserve savedWeight and totalWeight for other ingredients
           totalWeight: ing.savedWeight || ing.totalWeight || 0
-        };
-      }
-    }));
-    
-    // 3. Finally set ingredient and show modal together
-    // These should update in the same batch to prevent showing savedWeight before modal
+        }
+      })
+    })
+
     setSelectedIngredient(ingredientWithSaved);
     setShowProductVerification(true);
     // Don't reset zero check weight here - let it continue reading
@@ -2178,21 +2007,36 @@ function AppContent() {
 
   // Handle MO scan completion
   const handleStartWeighing = (moData) => {
+    // CRITICAL: Cancel any in-flight post-save refresh from the previous WO
+    if (postSaveAbortRef.current) {
+      postSaveAbortRef.current.abort()
+      postSaveAbortRef.current = null
+    }
+    // CRITICAL: Immediately reset all weighing refs so WebSocket/HTTP handlers
+    // stop writing scale readings from the previous WO into the new recipe.
+    workOrderRef.current = { mo: moData.moNumber }
+    selectedIngredientRef.current = null;
+    isWeighingActiveRef.current = false;
+    currentWeightRef.current = 0;
+    
     const targetQuantity = parseFloat(moData.quantity) || 1000
     const baseQuantity = moData.baseQuantity || 1000
     const scalingFactor = moData.scalingFactor || (targetQuantity / baseQuantity)
+    const scalingMode = moData.scalingMode || 'per_1000g'
     
-    console.log(`📏 Work Order Scaling: Base=${baseQuantity}g, Target=${targetQuantity}g, Factor=${scalingFactor}x`)
+    console.log(`📏 Work Order Scaling: mode=${scalingMode}, base=${baseQuantity}, target=${targetQuantity}g, factor=${scalingFactor}x${moData.plannedUnits != null ? `, units=${moData.plannedUnits} PCS` : ''}`)
     
     setWorkOrder({
       workOrder: moData.moNumber,
       formulaName: moData.skuName,
       orderQty: targetQuantity,
+      plannedUnits: moData.plannedUnits,
+      scalingMode,
       sku: moData.formulationCode,
       mo: moData.moNumber,
       formulationId: moData.formulationId,
-      baseQuantity: baseQuantity, // Store base quantity (1000g)
-      scalingFactor: scalingFactor // Store scaling factor for reference
+      baseQuantity: baseQuantity,
+      scalingFactor: scalingFactor
     })
     
     // Check if this is a resume operation (has existing progress)
@@ -2233,6 +2077,7 @@ function AppContent() {
           id: ingredientId,
           code: it.product_code || '',
           name: it.product_name || 'Unknown',
+          productId: it.product_id,
           currentWeight: 0, // Reset current reading for new measurement session
           targetWeight: targetMass,
           status: it.status || 'pending',
@@ -2243,8 +2088,8 @@ function AppContent() {
           progressPercentage: parseFloat(it.progress_percentage || ((targetMass > 0 ? (actualMass / targetMass * 100) : 0))) || 0,
           remainingWeight: parseFloat(it.remaining_weight || Math.max(0, targetMass - actualMass)) || 0,
           isWithinTolerance: it.is_within_tolerance,
-          toleranceMin: parseFloat(it.tolerance_min || 0) || 0,
-          toleranceMax: parseFloat(it.tolerance_max || 0) || 0,
+          toleranceMin: it.tolerance_min != null ? parseFloat(it.tolerance_min) : null,
+          toleranceMax: it.tolerance_max != null ? parseFloat(it.tolerance_max) : null,
           weighingStartedAt: it.weighing_started_at,
           weighingUpdatedAt: it.weighing_updated_at,
           weighingCompletedAt: it.weighing_completed_at,
@@ -2297,8 +2142,11 @@ function AppContent() {
       id: ingredient.formulation_ingredient_id || ingredient.ingredient_id || ingredient.id,
       code: ingredient.product_code || '',
       name: ingredient.product_name || 'Unknown',
+      productId: ingredient.product_id,
       currentWeight: 0,
-      targetWeight: parseFloat(ingredient.target_mass || 0) || 0, // Already scaled from MOScanModal
+      targetWeight: parseFloat(ingredient.target_mass || 0) || 0,
+      toleranceMin: ingredient.tolerance_min != null ? parseFloat(ingredient.tolerance_min) : null,
+      toleranceMax: ingredient.tolerance_max != null ? parseFloat(ingredient.tolerance_max) : null,
       status: 'pending',
       savedWeight: 0,
       totalWeight: 0,
@@ -2324,6 +2172,9 @@ function AppContent() {
     console.log('📡 ScaleDisplayWeight:', scaleDisplayWeight, 'g - Should update continuously from WebSocket')
 
     // Try to check for existing progress on server (fallback check)
+    // CRITICAL FIX: When isResume is false, we intentionally started a NEW work order with fresh ingredients.
+    // Do NOT overwrite with existing progress - that would show wrong weights from a previous batch when
+    // the same MO number or product code is reused. Only the explicit Resume flow (isResume=true) should load old progress.
     (async () => {
       try {
         const resp = await fetch(`/api/work-orders/${encodeURIComponent(moData.moNumber)}`)
@@ -2335,8 +2186,8 @@ function AppContent() {
             const actualMass = parseFloat(ing.actual_mass || 0) || 0
             return actualMass > 0
           })
-          
-          if (hasProgress) {
+          // FIX: Only overwrite when isResume is true. When starting NEW work order, never overwrite with old progress.
+          if (hasProgress && moData.isResume) {
             const mapped = ings.map(it => ({
               id: it.ingredient_id || it.product_code,
               name: it.product_name || 'Unknown',
@@ -2350,8 +2201,8 @@ function AppContent() {
               progressPercentage: parseFloat(it.progress_percentage || 0) || 0,
               remainingWeight: parseFloat(it.remaining_weight || 0) || 0,
               isWithinTolerance: it.is_within_tolerance,
-              toleranceMin: parseFloat(it.tolerance_min || 0) || 0,
-              toleranceMax: parseFloat(it.tolerance_max || 0) || 0,
+              toleranceMin: it.tolerance_min != null ? parseFloat(it.tolerance_min) : null,
+              toleranceMax: it.tolerance_max != null ? parseFloat(it.tolerance_max) : null,
               weighingStartedAt: it.weighing_started_at,
               weighingUpdatedAt: it.weighing_updated_at,
               weighingCompletedAt: it.weighing_completed_at,
@@ -2379,6 +2230,7 @@ function AppContent() {
             ingredients: [],
             progress: {
               totalQuantity: parseFloat(moData.quantity) || 0,
+              plannedUnits: moData.plannedUnits != null ? moData.plannedUnits : undefined,
               completedIngredients: 0,
               totalIngredients: ingredients.length
             }
@@ -2425,6 +2277,9 @@ function AppContent() {
   const resetWeighingRef = useRef(null)
   const handlePrintReceiptRef = useRef(null)
   
+  // Abort controller for cancelling in-flight post-save refreshes when switching WO
+  const postSaveAbortRef = useRef(null)
+  
   // Refs to store latest values for autosave (avoid stale closure in setInterval)
   const selectedIngredientRef = useRef(null)
   const currentWeightRef = useRef(0)
@@ -2458,6 +2313,23 @@ function AppContent() {
       })
     }
   }, [selectedIngredient, currentWeight, workOrder, isWeighingActive, autoSaveConfig])
+
+  // Abort any in-flight post-save refresh and clear refs synchronously.
+  // resetWeighing() only updates React state; refs are updated in useEffect (next paint).
+  // Without this, a slow post-save IIFE can still see the OLD workOrderRef.mo, pass the guard,
+  // and setRecipe() with the previous MO's weights — especially after auto-complete or between MOs.
+  const abortPostSaveRefreshAndClearWeighingRefs = useCallback(() => {
+    if (postSaveAbortRef.current) {
+      try {
+        postSaveAbortRef.current.abort()
+      } catch (_) { /* noop */ }
+      postSaveAbortRef.current = null
+    }
+    workOrderRef.current = null
+    selectedIngredientRef.current = null
+    isWeighingActiveRef.current = false
+    currentWeightRef.current = 0
+  }, [])
 
   // Handle save progress
   const handleSaveProgress = useCallback(async (skipPrint = false) => {
@@ -2539,6 +2411,7 @@ function AppContent() {
         ingredients: ingredientsToSave,
         progress: {
           totalQuantity: workOrder.orderQty,
+          plannedUnits: workOrder.plannedUnits != null ? workOrder.plannedUnits : undefined,
           completedIngredients: recipe.filter(ing => ing.status === 'completed').length,
           totalIngredients: recipe.length
         },
@@ -2588,6 +2461,14 @@ function AppContent() {
         throw new Error('Failed to parse server response');
       }
       
+      if (result.error === 'STALE_PROGRESS') {
+        alert.warning(
+          `${result.message || 'Progress work order belum termuat.'}\n\n${result.details || 'Tutup layar ini, lalu buka nomor MO yang sama untuk melanjutkan.'}`,
+          'Work Order Masih Berjalan'
+        )
+        return
+      }
+
       // Handle tolerance violation - this is a controlled error response (400 status)
       if (result.error === 'TOLERANCE_VIOLATION' || result.rejected) {
         // IMPORTANT: Print receipt FIRST before showing error (data is already saved)
@@ -2629,6 +2510,7 @@ function AppContent() {
         if (resetWeighingRef.current) {
           resetWeighingRef.current();
         } else {
+          abortPostSaveRefreshAndClearWeighingRefs()
           setWorkOrder(null)
           setRecipe([])
           setSelectedIngredient(null)
@@ -2696,6 +2578,7 @@ function AppContent() {
           if (resetWeighingRef.current) {
             resetWeighingRef.current();
           } else {
+            abortPostSaveRefreshAndClearWeighingRefs()
             setWorkOrder(null)
             setRecipe([])
             setSelectedIngredient(null)
@@ -2741,9 +2624,16 @@ function AppContent() {
         // This prevents stuck state and ensures clean state for next weighing
         setSelectedIngredient(null);
         setCurrentWeight(0);
-        setIsWeighingActive(false); // Stop weighing immediately to prevent stuck state
-        setZeroCheckWeight(0); // Reset zero check weight to allow fresh polling for next ingredient
+        setIsWeighingActive(false);
+        setZeroCheckWeight(0);
         setShowProductVerification(false);
+        
+        // CRITICAL: Immediately update refs so WebSocket/HTTP handlers stop writing
+        // scale readings into recipe cards. State updates are async (next render),
+        // but refs are synchronous — the handlers check refs to decide whether to update.
+        selectedIngredientRef.current = null;
+        isWeighingActiveRef.current = false;
+        currentWeightRef.current = 0;
         
         // CRITICAL: Reset currentWeight for all ingredients in recipe state immediately
         // This ensures no ingredient has stuck currentWeight after save
@@ -2755,10 +2645,21 @@ function AppContent() {
         // OPTIMIZED: Fetch updated recipe from backend in background (non-blocking)
         // This ensures we have the correct status without blocking UI or zero check polling
         // Fire and forget - don't await, let it complete in background
+        const moForThisSave = workOrder.mo;
+        const abortController = new AbortController();
+        postSaveAbortRef.current = abortController;
         (async () => {
           try {
-            const refreshResponse = await fetch(`http://localhost:3001/api/work-orders/${encodeURIComponent(workOrder.mo)}`);
+            const refreshResponse = await fetch(`http://localhost:3001/api/work-orders/${encodeURIComponent(moForThisSave)}`, { signal: abortController.signal });
             const refreshData = await refreshResponse.json();
+            
+            // CRITICAL FIX: If the user switched to a different work order while this fetch was in flight,
+            // do NOT overwrite the recipe. The current recipe belongs to the new WO.
+            const currentMoAfterFetch = workOrderRef.current?.mo;
+            if (currentMoAfterFetch !== moForThisSave) {
+              console.log(`⏭️ Post-save refresh skipped: WO changed from ${moForThisSave} to ${currentMoAfterFetch}`);
+              return;
+            }
           
           if (refreshData && refreshData.success && refreshData.data) {
             const refreshedIngredients = refreshData.data.ingredients || [];
@@ -2769,20 +2670,12 @@ function AppContent() {
               const actualMass = parseFloat(it.actual_mass || 0) || 0;
               const targetMass = parseFloat(it.target_mass || 0) || 0; // SCALED target from database!
               
-              // Find existing ingredient in current recipe to preserve currentWeight if still weighing
-              const existingIngredient = currentRecipeState.find(ing => 
-                (ing.id === it.ingredient_id) || 
-                (ing.id === it.product_code) ||
-                (ing.code === it.product_code)
-              );
+              // Find existing ingredient - match by ingredient_id (unique); avoid code match (same product can appear twice)
+              const existingIngredient = currentRecipeState.find(ing => ing.id === it.ingredient_id)
               
               // CRITICAL FIX: Preserve currentWeight if ingredient is still being weighed (not completed)
               // Only reset currentWeight if ingredient was just saved (not if it's a different ingredient)
-              const wasJustSaved = ingredientsToSave.some(saved => 
-                (saved.id === it.ingredient_id) || 
-                (saved.id === it.product_code) ||
-                (saved.code === it.product_code)
-              );
+              const wasJustSaved = ingredientsToSave.some(saved => saved.id === it.ingredient_id);
               
               // Preserve currentWeight if:
               // 1. Ingredient exists in current recipe
@@ -2809,7 +2702,7 @@ function AppContent() {
               }
               
               return {
-                id: it.ingredient_id || it.product_code,
+                id: it.ingredient_id ?? it.product_code,
                 code: it.product_code || '',
                 name: it.product_name || 'Unknown',
                 currentWeight: shouldPreserveCurrentWeight ? (existingIngredient.currentWeight || 0) : 0, // Preserve if still weighing (and not just saved)
@@ -2821,8 +2714,8 @@ function AppContent() {
                 progressPercentage: parseFloat(it.progress_percentage || 0) || 0,
                 remainingWeight: parseFloat(it.remaining_weight || 0) || 0,
                 isWithinTolerance: it.is_within_tolerance,
-                toleranceMin: parseFloat(it.tolerance_min || 0) || 0,
-                toleranceMax: parseFloat(it.tolerance_max || 0) || 0,
+                toleranceMin: it.tolerance_min != null ? parseFloat(it.tolerance_min) : null,
+                toleranceMax: it.tolerance_max != null ? parseFloat(it.tolerance_max) : null,
                 weighingStartedAt: it.weighing_started_at,
                 weighingUpdatedAt: it.weighing_updated_at,
                 weighingCompletedAt: it.weighing_completed_at,
@@ -2860,12 +2753,33 @@ function AppContent() {
             // This ensures RecipePanel receives the updated recipe prop
             // CRITICAL: Ensure all currentWeight is reset to 0 after save
             // This prevents stuck state where currentWeight persists after save
+            // Re-check WO hasn't changed before committing to state
+            if (workOrderRef.current?.mo !== moForThisSave) {
+              console.log(`⏭️ Post-save refresh skipped (before setRecipe): WO changed from ${moForThisSave} to ${workOrderRef.current?.mo}`);
+              return;
+            }
+            
             const cleanedRecipe = updatedRecipe.map(ing => ({
               ...ing,
               currentWeight: 0  // Force reset all currentWeight after save refresh
             }));
             
             setRecipe([...cleanedRecipe]);
+
+            setSelectedIngredient(prev => {
+              if (!prev) return prev
+              const refreshed = cleanedRecipe.find(
+                ing => ing.id === prev.id || (prev.code && ing.code === prev.code)
+              )
+              if (!refreshed) return prev
+              return {
+                ...prev,
+                ...refreshed,
+                currentWeight: 0,
+                toleranceMin: refreshed.toleranceMin,
+                toleranceMax: refreshed.toleranceMax
+              }
+            })
             
             // Log for debugging RecipePanel update
             console.log('📋 Recipe state updated, RecipePanel should re-render with:', cleanedRecipe.map(ing => ({
@@ -2879,6 +2793,10 @@ function AppContent() {
             setIsWeighingActive(false);
           } else {
             // Fallback: update recipe locally if refresh fails
+            if (workOrderRef.current?.mo !== moForThisSave) {
+              console.log(`⏭️ Post-save fallback skipped: WO changed from ${moForThisSave} to ${workOrderRef.current?.mo}`);
+              return;
+            }
             console.warn('⚠️ Failed to refresh recipe from backend, using local update');
             const savedIngredientIds = ingredientsToSave.map(ing => ing.id);
             
@@ -2890,14 +2808,8 @@ function AppContent() {
                 
                 // Calculate if within tolerance for local check
                 const targetWeight = ing.targetWeight || 0;
-                const toleranceMin = ing.toleranceMin !== undefined && ing.toleranceMin !== null
-                  ? parseFloat(ing.toleranceMin)
-                  : Math.max(0, targetWeight - 3);
-                const toleranceMax = ing.toleranceMax !== undefined && ing.toleranceMax !== null
-                  ? parseFloat(ing.toleranceMax)
-                  : targetWeight + 3;
-                
-                const withinTolerance = targetWeight > 0 && newSavedWeight >= toleranceMin && newSavedWeight <= toleranceMax;
+                const { toleranceMin, toleranceMax, hasValidTolerance } = getToleranceRangeFromIngredient(ing);
+                const withinTolerance = hasValidTolerance && targetWeight > 0 && newSavedWeight >= toleranceMin && newSavedWeight <= toleranceMax;
                 
                 return { 
                   ...ing, 
@@ -2920,8 +2832,17 @@ function AppContent() {
             setIsWeighingActive(false);
           }
           } catch (refreshError) {
+            // If aborted (user switched WO), silently skip — no fallback needed
+            if (refreshError?.name === 'AbortError') {
+              console.log('⏭️ Post-save refresh aborted (user switched WO)');
+              return;
+            }
             console.error('❌ Error refreshing recipe after save (non-critical, background):', refreshError);
-          // Fallback to local update
+            // Fallback to local update - also check WO hasn't changed
+            if (workOrderRef.current?.mo !== moForThisSave) {
+            console.log(`⏭️ Post-save catch fallback skipped: WO changed`);
+            return;
+          }
           const savedIngredientIds = ingredientsToSave.map(ing => ing.id);
           
           setRecipe(prev => prev.map(ing => {
@@ -2931,14 +2852,8 @@ function AppContent() {
               const newSavedWeight = previousSavedWeight + currentReading;
               
               const targetWeight = ing.targetWeight || 0;
-              const toleranceMin = ing.toleranceMin !== undefined && ing.toleranceMin !== null
-                ? parseFloat(ing.toleranceMin)
-                : Math.max(0, targetWeight - 3);
-              const toleranceMax = ing.toleranceMax !== undefined && ing.toleranceMax !== null
-                ? parseFloat(ing.toleranceMax)
-                : targetWeight + 3;
-              
-              const withinTolerance = targetWeight > 0 && newSavedWeight >= toleranceMin && newSavedWeight <= toleranceMax;
+              const { toleranceMin, toleranceMax, hasValidTolerance } = getToleranceRangeFromIngredient(ing);
+              const withinTolerance = hasValidTolerance && targetWeight > 0 && newSavedWeight >= toleranceMin && newSavedWeight <= toleranceMax;
               
               return { 
                 ...ing, 
@@ -2977,7 +2892,8 @@ function AppContent() {
     recipe,
     selectedIngredient,
     currentWeight,
-    alert
+    alert,
+    abortPostSaveRefreshAndClearWeighingRefs
   ])
 
   // Update refs when functions change - CRITICAL: This must run immediately
@@ -3137,6 +3053,7 @@ function AppContent() {
 
   // Reset weighing process
   const resetWeighing = useCallback(() => {
+    abortPostSaveRefreshAndClearWeighingRefs()
     setWorkOrder(null)
     setRecipe([])
     setSelectedIngredient(null)
@@ -3145,18 +3062,35 @@ function AppContent() {
     setZeroCheckWeight(0) // Reset zero check weight
     setShowProductVerification(false)
     setShowBarcodeScanner(false)
-  }, [])
+  }, [abortPostSaveRefreshAndClearWeighingRefs])
 
   // Update resetWeighing ref
   useEffect(() => {
     resetWeighingRef.current = resetWeighing
   }, [resetWeighing])
 
+  useEffect(() => {
+    if (!isLoggedIn || !currentUser) return
+    if (!canAccessPage(currentUser.role, currentPage)) {
+      alert.error('Akses ditolak. Anda tidak memiliki izin untuk mengakses halaman ini.', 'Akses Ditolak')
+      setCurrentPage('home')
+    }
+  }, [currentPage, currentUser, isLoggedIn, alert])
+
   const handlePageChange = (page) => {
+    if (!canAccessPage(currentUser?.role, page)) {
+      alert.error('Akses ditolak. Anda tidak memiliki izin untuk mengakses halaman ini.', 'Akses Ditolak')
+      setCurrentPage('home')
+      return
+    }
     setCurrentPage(page)
   }
 
   const renderCurrentPage = () => {
+    if (!canAccessPage(currentUser?.role, currentPage)) {
+      return null
+    }
+
     switch (currentPage) {
       case 'home':
         return (
@@ -3196,7 +3130,7 @@ function AppContent() {
       case 'history':
         return <History 
           currentUser={currentUser}
-          onNavigateToDetail={(moNumber) => setCurrentPage(`history-detail-${moNumber}`)} 
+          onNavigateToDetail={(moNumber) => handlePageChange(`history-detail-${moNumber}`)} 
         />
       case 'user-management':
         return <UserManagement 
@@ -3205,7 +3139,7 @@ function AppContent() {
         />
       case 'weighing-receiver':
         return <WeighingReceiverList 
-          onNavigateToDetail={(dataId) => setCurrentPage(`weighing-receiver-detail-${dataId}`)} 
+          onNavigateToDetail={(dataId) => handlePageChange(`weighing-receiver-detail-${dataId}`)} 
         />
       default:
         if (currentPage && currentPage.startsWith('history-detail-')) {
@@ -3256,6 +3190,7 @@ function AppContent() {
 
   const handleLogin = (user) => {
     setCurrentUser(user)
+    setCurrentPage('home')
     setIsLoggedIn(true)
   }
 

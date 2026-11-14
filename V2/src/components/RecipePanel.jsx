@@ -1,9 +1,11 @@
 import React from 'react'
 import { QrCode, Package } from 'lucide-react'
+import { getToleranceRangeFromIngredient } from '../utils/weighingTolerance.js'
 
 const RecipePanel = ({ workOrder, recipe, onIngredientClick, onStartScan, onStartMOScan, isWeighingActive, selectedIngredient }) => {
   const getStatusCounts = () => {
-    if (!recipe.length) return { completed: 0, pending: 0, empty: 0, total: 0 }
+    // Guard: no recipe or empty recipe - return zeros
+    if (!recipe || !recipe.length) return { completed: 0, pending: 0, empty: 0, total: 0 }
     
     let completed = 0
     let pending = 0
@@ -12,34 +14,39 @@ const RecipePanel = ({ workOrder, recipe, onIngredientClick, onStartScan, onStar
     recipe.forEach(item => {
       const savedWeight = parseFloat(item.savedWeight || 0) || 0
       const currentWeight = parseFloat(item.currentWeight || 0) || 0
-      const totalWeight = item.totalWeight || (savedWeight + currentWeight)
+      // Use live values (savedWeight + currentWeight) - item.totalWeight can be stale during weighing
+      const totalWeight = savedWeight + currentWeight
       const targetWeight = parseFloat(item.targetWeight || 0) || 0
       
-      // Check if completed (by status or by weight within tolerance)
+      // Check if completed (by status from backend - trust it)
       if (item.status === 'completed') {
         completed++
         return
       }
       
-      // Check if within tolerance range (completed)
-      if (targetWeight > 0) {
-        const toleranceMin = item.toleranceMin !== undefined && item.toleranceMin !== null
-          ? parseFloat(item.toleranceMin)
-          : Math.max(0, targetWeight - 3)
-        const toleranceMax = item.toleranceMax !== undefined && item.toleranceMax !== null
-          ? parseFloat(item.toleranceMax)
-          : targetWeight + 3
-        
-        if (totalWeight >= toleranceMin && totalWeight <= toleranceMax) {
+      // Check if empty (no weight at all - hasn't been started)
+      // CRITICAL: Must check BEFORE tolerance - for target < 3g, toleranceMin=0 so totalWeight=0
+      // would incorrectly fall in range [0, target+3] and be marked completed
+      const hasNoWeight = savedWeight <= 0 && currentWeight <= 0
+      if (hasNoWeight) {
+        empty++
+        return
+      }
+      
+      // Respect backend status 'empty' when present
+      if (item.status === 'empty') {
+        empty++
+        return
+      }
+      
+      // Check if within tolerance range (completed) - only when we have valid target, tolerance, AND actual weight
+      // Never count as completed when totalWeight is 0 (already handled above)
+      if (targetWeight > 0 && totalWeight > 0) {
+        const { toleranceMin, toleranceMax, hasValidTolerance } = getToleranceRangeFromIngredient(item)
+        if (hasValidTolerance && totalWeight >= toleranceMin && totalWeight <= toleranceMax) {
           completed++
           return
         }
-      }
-      
-      // Check if empty (no weight at all - hasn't been started)
-      if (savedWeight === 0 && currentWeight === 0 && totalWeight === 0) {
-        empty++
-        return
       }
       
       // Otherwise, it's pending (has some weight but not completed)
@@ -68,9 +75,10 @@ const RecipePanel = ({ workOrder, recipe, onIngredientClick, onStartScan, onStar
       (selectedIngredient.name && selectedIngredient.name === ingredient.name)
     )
     
-    // Check if ingredient is completed
+    // Check if ingredient is completed (never completed with 0 weight - fixes target < 3g bug)
     const isCompleted = ingredient.status === 'completed' || 
       (ingredient.targetWeight > 0 && 
+       savedWeight > 0 &&
        ingredient.toleranceMin !== undefined && 
        ingredient.toleranceMax !== undefined &&
        savedWeight >= ingredient.toleranceMin && 
@@ -110,21 +118,18 @@ const RecipePanel = ({ workOrder, recipe, onIngredientClick, onStartScan, onStar
     
     // PRIORITY 2: Check if within tolerance range (if tolerance values are available)
     // This handles cases where status might not be updated yet but weight is within tolerance
-    const savedWeight = ingredient.savedWeight || 0
-    const currentWeight = ingredient.currentWeight || 0
-    const totalWeight = ingredient.totalWeight || (savedWeight + currentWeight)
+    const savedWeight = parseFloat(ingredient.savedWeight || 0) || 0
+    const currentWeight = parseFloat(ingredient.currentWeight || 0) || 0
+    const totalWeight = savedWeight + currentWeight
     const targetWeight = ingredient.targetWeight || 0
     
-    // Get tolerance values (from ingredient or calculate default ±3g)
-    const toleranceMin = ingredient.toleranceMin !== undefined && ingredient.toleranceMin !== null
-      ? parseFloat(ingredient.toleranceMin)
-      : Math.max(0, targetWeight - 3)
-    const toleranceMax = ingredient.toleranceMax !== undefined && ingredient.toleranceMax !== null
-      ? parseFloat(ingredient.toleranceMax)
-      : targetWeight + 3
+    // Never completed when no weight has been input (for target < 3g, toleranceMin=0 so 0 would be in range)
+    if (totalWeight <= 0) return 'pending'
     
-    // Check if within tolerance range
-    if (targetWeight > 0 && totalWeight >= toleranceMin && totalWeight <= toleranceMax) {
+    // Get tolerance values from template preview / saved progress
+    const { toleranceMin, toleranceMax, hasValidTolerance } = getToleranceRangeFromIngredient(ingredient)
+    
+    if (hasValidTolerance && targetWeight > 0 && totalWeight >= toleranceMin && totalWeight <= toleranceMax) {
       return 'completed'
     }
     
@@ -157,9 +162,10 @@ const RecipePanel = ({ workOrder, recipe, onIngredientClick, onStartScan, onStar
       (selectedIngredient.name && selectedIngredient.name === ingredient.name)
     )
     
-    // Check if ingredient is completed
+    // Check if ingredient is completed (never completed with 0 weight - fixes target < 3g bug)
     const isCompleted = ingredient.status === 'completed' || 
       (ingredient.targetWeight > 0 && 
+       savedWeight > 0 &&
        ingredient.toleranceMin !== undefined && 
        ingredient.toleranceMax !== undefined &&
        savedWeight >= ingredient.toleranceMin && 
@@ -178,26 +184,31 @@ const RecipePanel = ({ workOrder, recipe, onIngredientClick, onStartScan, onStar
     return totalWeight
   }
 
+  // Only show status indicators when we have a work order with recipe (avoids wrong state when conditions not met)
+  const showStatusIndicators = workOrder && recipe && recipe.length > 0
+
   return (
     <div className="recipe-panel">
-      <div className="status-indicators">
-        <div className="status-item">
-          <div className="status-icon completed">{statusCounts.completed}</div>
-          <span>Completed</span>
+      {showStatusIndicators && (
+        <div className="status-indicators">
+          <div className="status-item">
+            <div className="status-icon completed">{statusCounts.completed}</div>
+            <span>Completed</span>
+          </div>
+          <div className="status-item">
+            <div className="status-icon pending">{statusCounts.pending}</div>
+            <span>Pending</span>
+          </div>
+          <div className="status-item">
+            <div className="status-icon empty">{statusCounts.empty}</div>
+            <span>Empty</span>
+          </div>
+          <div className="status-item">
+            <div className="status-icon total">{statusCounts.total}</div>
+            <span>Total</span>
+          </div>
         </div>
-        <div className="status-item">
-          <div className="status-icon pending">{statusCounts.pending}</div>
-          <span>Pending</span>
-        </div>
-        <div className="status-item">
-          <div className="status-icon empty">{statusCounts.empty}</div>
-          <span>Empty</span>
-        </div>
-        <div className="status-item">
-          <div className="status-icon total">{statusCounts.total}</div>
-          <span>Total</span>
-        </div>
-      </div>
+      )}
 
       <div className="recipe-section">
         <div className="recipe-title">Scale</div>
@@ -245,11 +256,9 @@ const RecipePanel = ({ workOrder, recipe, onIngredientClick, onStartScan, onStar
             const progress = getProgressPercentage(ingredient)
             const displayWeight = getDisplayWeight(ingredient)
             
-            // CRITICAL: Use stable, unique key based on ingredient.id (not position-based)
-            // This ensures React correctly identifies and updates the right ingredient
-            // Adding savedWeight and currentWeight to key ensures re-render when weight changes
-            // But primary key is still ingredient.id to maintain component identity
-            const uniqueKey = `${ingredient.id || ingredient.code || index}-${ingredient.savedWeight || 0}-${ingredient.currentWeight || 0}`
+            // CRITICAL: Use stable, unique key - index ensures uniqueness when id/code are duplicated (same product twice)
+            // Prevents React from reusing DOM for wrong ingredient and showing wrong weight on other cards
+            const uniqueKey = `ingredient-${index}-${String(ingredient.id ?? ingredient.code ?? index)}`
             
             // Debug: Log when ingredient has currentWeight (reduced logging - only log significant changes)
             // Removed frequent logging to reduce console spam

@@ -3,108 +3,92 @@
 ## Setup Cepat (5 Menit)
 
 ### Windows
-1. **Download dan Install Prerequisites:**
-   - Node.js: https://nodejs.org/ (LTS version)
-   - PostgreSQL: https://www.postgresql.org/download/windows/
 
-2. **Jalankan Setup Otomatis:**
+1. **Install prerequisites:**
+   - Node.js 18+ LTS: https://nodejs.org/
+   - PostgreSQL 14+: https://www.postgresql.org/download/windows/
+
+2. **Cek sistem (opsional):**
+   ```cmd
+   check-requirements.bat
+   ```
+
+3. **Jalankan setup otomatis:**
    ```cmd
    setup.bat
    ```
+   Setup akan: `npm install` → buat `.env` dari `env.example` → `setup-database.bat` → `npm run dev:full`
 
-3. **Buka Aplikasi:**
-   - Browser akan otomatis membuka di http://localhost:3000
-   - Login dengan: `faliq` / `123456`
+4. **Buka aplikasi:**
+   - Frontend: http://localhost:3000
+   - Backend API: http://localhost:3001/api
+   - Login: `admin` / `admin123`
+
+Panduan lengkap: [SETUP_GUIDE.md](./SETUP_GUIDE.md)
 
 ### Linux/macOS
-1. **Install Prerequisites:**
-   ```bash
-   # Ubuntu/Debian
-   sudo apt update
-   sudo apt install nodejs npm postgresql postgresql-contrib
-   
-   # macOS
-   brew install node postgresql
-   ```
 
-2. **Jalankan Setup:**
-   ```bash
-   chmod +x setup.sh
-   ./setup.sh
-   ```
+1. Install Node.js dan PostgreSQL
+2. Copy env: `cp env.example .env`
+3. Setup DB: `./setup.sh` (jika tersedia) atau manual import schema
+4. `npm install && npm run dev:full`
 
-3. **Buka Aplikasi:**
-   - Buka browser ke http://localhost:3000
-   - Login dengan: `faliq` / `123456`
+## Port Resmi
 
-## Manual Setup (Jika Script Gagal)
+| Layanan | Port |
+|---------|------|
+| Frontend (Vite dev) | 3000 |
+| Backend API | 3001 |
+| PostgreSQL | 5432 |
 
-### 1. Install Dependencies
-```bash
-npm install
-```
+## Kredensial Database (Default)
 
-### 2. Setup Database
-```bash
-# Buat database
-sudo -u postgres psql -c "CREATE DATABASE FLB_MOWS;"
-
-# Import schema
-sudo -u postgres psql -d FLB_MOWS -f database/schema.sql
-```
-
-### 3. Start Application
-```bash
-npm run dev
-```
+| Setting | Nilai |
+|---------|-------|
+| DB_NAME | FLB_MOWS |
+| DB_USER | postgres |
+| DB_PASSWORD | Admin123 |
+| DB_PORT | 5432 |
 
 ## Demo Accounts
 
 | Username | Password | Role |
 |----------|----------|------|
-| faliq | 123456 | Operator |
 | admin | admin123 | Admin |
+| faliq | 123456 | Operator |
 | operator1 | op123 | Operator |
 | supervisor | sup123 | Supervisor |
 
+## Manual Setup (Jika Script Gagal)
+
+```bash
+npm install
+copy env.example .env          # Windows
+setup-database.bat             # Windows
+npm run dev:full
+```
+
 ## Troubleshooting
 
-### Port 3000 Already in Use
-```bash
-# Windows
+### Port 3000 / 3001 Already in Use
+
+```cmd
 netstat -ano | findstr :3000
 taskkill /PID <PID> /F
-
-# Linux/macOS
-lsof -i :3000
-kill -9 <PID>
 ```
 
 ### Database Connection Failed
-```bash
-# Check PostgreSQL status
-sudo systemctl status postgresql
 
-# Restart PostgreSQL
-sudo systemctl restart postgresql
-```
+1. Pastikan PostgreSQL service running
+2. Cek `DB_PASSWORD=Admin123` di `.env`
+3. Jalankan `setup-database.bat`
 
-### Dependencies Install Failed
-```bash
-# Clear cache and reinstall
-rm -rf node_modules package-lock.json
-npm install
-```
+### Server Tidak Merespons di Login
 
-## Next Steps
+Jalankan `start-server.bat` atau `npm run server` — halaman login menampilkan status health.
 
-1. **Konfigurasi Hardware:** Lihat `SETUP_GUIDE.md` untuk setup timbangan dan scanner
-2. **Customization:** Edit data di `src/App.jsx` untuk menyesuaikan dengan kebutuhan
-3. **Production:** Lihat bagian Deployment di `SETUP_GUIDE.md`
+## Next Steps (Admin)
 
-## Support
-
-- **Dokumentasi Lengkap:** `SETUP_GUIDE.md`
-- **Issues:** [GitHub Issues]
-- **Email:** support@presisitech.com
-
+1. Settings → checklist setup awal (timbangan, printer, import CSV)
+2. Database → Import CSV dengan **Full Refresh**
+3. Settings → Umum → upload logo (opsional)

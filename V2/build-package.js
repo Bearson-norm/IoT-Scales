@@ -117,6 +117,11 @@ try {
 // Step 5: Copy necessary files to release directory
 console.log('4️⃣  Copying files to release directory...');
 const filesToCopy = [
+  { from: 'launcher', to: 'launcher', optional: false },
+  { from: 'launcher/Open-Launcher.vbs', to: 'Open IoT Scales.vbs', optional: true },
+  { from: 'launcher/Start-IoT-Scales-Silent.vbs', to: 'Start-IoT-Scales-Silent.vbs', optional: true },
+  { from: 'env.example', to: 'env.example', optional: true },
+  { from: 'branding', to: 'branding', optional: true },
   { from: 'dist', to: 'dist' },
   { from: 'database', to: 'database' },
   { from: 'uploads', to: 'uploads' },
@@ -124,6 +129,7 @@ const filesToCopy = [
   { from: 'README.md', to: 'README.md' },
   { from: 'LICENSE', to: 'LICENSE', optional: true },
   { from: 'setup-database.bat', to: 'setup-database.bat', optional: false },
+  { from: 'scripts', to: 'scripts', optional: false },
   { from: 'printer-config.json', to: 'printer-config.json', optional: true },
   { from: 'scale-config.json', to: 'scale-config.json', optional: true },
   // Serialport modules - copy complete with all dependencies

@@ -68,16 +68,20 @@ Di terminal **TERPISAH**, jalankan:
 npm run dev
 ```
 
-**Vite Dev Server** akan start di: **http://localhost:5173**
+**Vite Dev Server** akan start di: **http://localhost:3000**
+
+Atau jalankan backend + frontend sekaligus: `npm run dev:full`
 
 ### 4. Akses Aplikasi
 
 1. Buka browser
-2. Go to: **http://localhost:5173**
+2. Go to: **http://localhost:3000**
 3. Login dengan akun demo:
-   - **Username:** `faliq`
-   - **Password:** `123456`
-   - **Role:** Operator
+   - **Username:** `admin`
+   - **Password:** `admin123`
+   - **Role:** Admin
+
+Kredensial DB default: `postgres` / `Admin123` — lihat `env.example` dan [docs/SETUP_GUIDE.md](docs/SETUP_GUIDE.md)
 
 ---
 

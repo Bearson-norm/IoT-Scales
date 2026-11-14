@@ -1,73 +1,80 @@
 @echo off
+setlocal enabledelayedexpansion
 echo ========================================
-echo IoT Scales V2 - Setup Script (Windows)
+echo IoT Scales V2 - Full Setup (Windows)
 echo ========================================
 echo.
+echo Recommended setup path:
+echo   1. check-requirements.bat
+echo   2. setup-database.bat  (upgrade DB + migrations, preserves data)
+echo   3. npm run dev:full    (backend :3001 + frontend :3000)
+echo.
+echo NOTE: setup.bat does NOT create folder release/
+echo       release/ + IoT-scales-V2.exe = run build-package.bat (production package)
+echo.
 
-echo [1/6] Checking Node.js installation...
+echo [1/4] Checking Node.js...
 node --version >nul 2>&1
 if %errorlevel% neq 0 (
-    echo ERROR: Node.js not found. Please install Node.js from https://nodejs.org/
+    echo ERROR: Node.js not found. Install from https://nodejs.org/
     pause
     exit /b 1
 )
-echo Node.js is installed.
+echo Node.js OK.
 
 echo.
-echo [2/6] Checking PostgreSQL installation...
+echo [2/4] Checking PostgreSQL...
 psql --version >nul 2>&1
 if %errorlevel% neq 0 (
-    echo ERROR: PostgreSQL not found. Please install PostgreSQL from https://www.postgresql.org/
+    echo ERROR: PostgreSQL not found. Install from https://www.postgresql.org/
     pause
     exit /b 1
 )
-echo PostgreSQL is installed.
+echo PostgreSQL OK.
 
 echo.
-echo [3/6] Installing application dependencies...
+echo [3/4] Installing dependencies...
 call npm install
 if %errorlevel% neq 0 (
-    echo ERROR: Failed to install dependencies
+    echo ERROR: npm install failed
     pause
     exit /b 1
 )
-echo Dependencies installed successfully.
+
+if not exist ".env" (
+    if exist "env.example" (
+        echo Creating .env from env.example...
+        copy /Y env.example .env >nul
+    )
+)
 
 echo.
-echo [4/6] Setting up database...
-echo Please enter PostgreSQL password when prompted:
-
-REM Drop any existing database (case insensitive)
-psql -U postgres -c "DROP DATABASE IF EXISTS flb_mows;" 2>nul
-psql -U postgres -c "DROP DATABASE IF EXISTS FLB_MOWS;" 2>nul
-psql -U postgres -c "DROP DATABASE IF EXISTS \"FLB_MOWS\";" 2>nul
-
-REM Create database with proper case
-psql -U postgres -c "CREATE DATABASE \"FLB_MOWS\";" 2>nul
+echo [4/4] Running database setup - upgrade mode, data preserved...
+call "%~dp0setup-database.bat"
 if %errorlevel% neq 0 (
-    echo ERROR: Failed to create database FLB_MOWS
-    echo Please check PostgreSQL connection and try again
+    echo ERROR: Database setup failed. Try setup-database-debug.bat for details.
     pause
     exit /b 1
 )
-echo Database FLB_MOWS created successfully
 
 echo.
-echo [5/6] Importing database schema...
-psql -U postgres -d FLB_MOWS -f database/schema.sql
-if %errorlevel% neq 0 (
-    echo ERROR: Failed to import database schema
-    echo Please check database connection and try again
-    pause
-    exit /b 1
+if not exist "release\IoT-scales-V2.exe" (
+    echo INFO: Folder release/ belum ada - ini normal setelah setup.bat
+    echo       setup.bat = lingkungan development ^(npm run dev:full^)
+    echo       Untuk .exe portable / installer: jalankan build-package.bat
+    echo.
 )
-echo Database schema imported successfully.
 
+echo ========================================
+echo Setup complete.
 echo.
-echo [6/6] Starting application...
-echo Application will start at http://localhost:3000
-echo Press Ctrl+C to stop the application
+echo To start the application:
+echo   npm run dev:full     ^(backend :3001 + frontend :3000^)
+echo   start-server.bat     ^(backend only :3001^)
 echo.
-call npm run dev
-
+echo   Frontend: http://localhost:3000
+echo   Backend:  http://localhost:3001
+echo   Login:    admin / admin123
+echo ========================================
+echo.
 pause

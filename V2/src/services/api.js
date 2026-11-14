@@ -107,8 +107,9 @@ class ApiService {
   }
 
   // Formulations API
-  async getFormulations() {
-    return this.request('/formulations');
+  async getFormulations({ includeInactive = false } = {}) {
+    const qs = includeInactive ? '?includeInactive=true' : '';
+    return this.request(`/formulations${qs}`);
   }
 
   async getFormulation(id) {
@@ -148,6 +149,30 @@ class ApiService {
     });
   }
 
+  async addFormulationIngredient(formulationId, { productId, targetMass, sequenceOrder }) {
+    return this.request(`/formulations/${formulationId}/ingredients`, {
+      method: 'POST',
+      body: JSON.stringify({ productId, targetMass, sequenceOrder }),
+    });
+  }
+
+  async updateFormulationIngredient(ingredientId, data) {
+    return this.request(`/formulation-ingredients/${ingredientId}`, {
+      method: 'PUT',
+      body: JSON.stringify(data),
+    });
+  }
+
+  async deleteFormulationIngredient(ingredientId) {
+    return this.request(`/formulation-ingredients/${ingredientId}`, {
+      method: 'DELETE',
+    });
+  }
+
+  async getBranding() {
+    return this.request('/branding');
+  }
+
   // Tolerance Groupings API
   async getToleranceGroupings() {
     return this.request('/tolerance-groupings');
@@ -174,6 +199,54 @@ class ApiService {
   async deleteToleranceGrouping(id) {
     return this.request(`/tolerance-groupings/${id}`, {
       method: 'DELETE',
+    });
+  }
+
+  async getWeighingToleranceTemplates() {
+    return this.request('/weighing-tolerance-templates');
+  }
+
+  async createWeighingToleranceTemplate(data) {
+    return this.request('/weighing-tolerance-templates', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
+  }
+
+  async updateWeighingToleranceTemplate(id, data) {
+    return this.request(`/weighing-tolerance-templates/${id}`, {
+      method: 'PUT',
+      body: JSON.stringify(data),
+    });
+  }
+
+  async deleteWeighingToleranceTemplate(id) {
+    return this.request(`/weighing-tolerance-templates/${id}`, {
+      method: 'DELETE',
+    });
+  }
+
+  async setDefaultWeighingToleranceTemplate(id) {
+    return this.request(`/weighing-tolerance-templates/${id}/set-default`, {
+      method: 'PUT',
+    });
+  }
+
+  async getWeighingToleranceTemplateBands(id) {
+    return this.request(`/weighing-tolerance-templates/${id}/bands`);
+  }
+
+  async updateWeighingToleranceTemplateBands(id, bands) {
+    return this.request(`/weighing-tolerance-templates/${id}/bands`, {
+      method: 'PUT',
+      body: JSON.stringify({ bands }),
+    });
+  }
+
+  async resolveWeighingToleranceBatch(formulationId, items) {
+    return this.request('/weighing-tolerance-templates/resolve-batch', {
+      method: 'POST',
+      body: JSON.stringify({ formulationId, items }),
     });
   }
 

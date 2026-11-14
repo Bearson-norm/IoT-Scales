@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react'
 import { Search, Plus, Edit, Trash2, Users, Filter, Eye, EyeOff, AlertCircle } from 'lucide-react'
 import { useAlert } from '../utils/alertModal'
+import { canAccessPage } from '../utils/rolePermissions'
 
 // Resolve API base URL dynamically
 let API_BASE_URL = 'http://localhost:3001/api'
@@ -52,25 +53,24 @@ const UserManagement = ({ currentUser, onAccessDenied }) => {
     status: 'active'
   })
 
-  // Check if user is admin (case-insensitive)
-  const isAdmin = currentUser && currentUser.role && currentUser.role.toLowerCase() === 'admin'
+  const hasAccess = canAccessPage(currentUser?.role, 'user-management')
 
   // Redirect if not admin
   useEffect(() => {
-    if (!isAdmin) {
+    if (!hasAccess) {
       if (onAccessDenied) {
         onAccessDenied()
       }
       alert.error('Akses ditolak. Hanya admin yang dapat mengakses halaman ini.', 'Akses Ditolak')
     }
-  }, [isAdmin, onAccessDenied, alert])
+  }, [hasAccess, onAccessDenied, alert])
 
   // Load users from API
   useEffect(() => {
-    if (isAdmin) {
+    if (hasAccess) {
       loadUsers()
     }
-  }, [isAdmin])
+  }, [hasAccess])
 
   const loadUsers = async () => {
     setIsLoading(true)
@@ -261,7 +261,7 @@ const UserManagement = ({ currentUser, onAccessDenied }) => {
   const roles = ['all', 'admin', 'supervisor', 'operator', 'qc']
 
   // Don't render if not admin
-  if (!isAdmin) {
+  if (!hasAccess) {
     return (
       <div className="master-content">
         <div className="empty-state">

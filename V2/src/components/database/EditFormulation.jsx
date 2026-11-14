@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react'
-import { ArrowLeft, Save, Trash2, Plus, Edit, Loader2, AlertCircle, CheckCircle, MoreVertical } from 'lucide-react'
+import { ArrowLeft, Save, Trash2, Plus, Edit, Loader2, AlertCircle, CheckCircle } from 'lucide-react'
 import apiService from '../../services/api.js'
 
 const EditFormulation = ({ formulation, products, onSave, onCancel }) => {
@@ -20,6 +20,8 @@ const EditFormulation = ({ formulation, products, onSave, onCancel }) => {
     productId: '',
     targetMass: 0
   })
+  const [editingIngredient, setEditingIngredient] = useState(null)
+  const [editIngredientData, setEditIngredientData] = useState({ targetMass: 0 })
 
   const loadIngredients = useCallback(async () => {
     console.log('🔍 loadIngredients called with formulation:', formulation)
@@ -146,7 +148,8 @@ const EditFormulation = ({ formulation, products, onSave, onCancel }) => {
         formulationName: formData.formulationName,
         sku: skuCode,
         totalMass: formData.totalMass,
-        status: formData.status
+        status: formData.status,
+        weighingToleranceTemplateId: null
       })
       
       if (response.success) {
@@ -175,22 +178,20 @@ const EditFormulation = ({ formulation, products, onSave, onCancel }) => {
       setLoading(true)
       setError(null)
       
-      // Here you would add the ingredient to the formulation
-      // For now, we'll just add it to the local state
-      const selectedProduct = products.find(p => p.id === newIngredient.productId)
-      const newIngredientData = {
-        id: Date.now(), // Temporary ID
-        ingredient_code: selectedProduct.product_code,
-        ingredient_name: selectedProduct.product_name,
-        target_mass: newIngredient.targetMass,
-        category: selectedProduct.product_category,
-        type_tolerance: selectedProduct.type_tolerance
-      }
+      const response = await apiService.addFormulationIngredient(formulation.id, {
+        productId: newIngredient.productId,
+        targetMass: newIngredient.targetMass,
+        sequenceOrder: ingredients.length + 1
+      })
       
-      setIngredients([...ingredients, newIngredientData])
-      setNewIngredient({ productId: '', targetMass: 0 })
-      setShowAddIngredient(false)
-      setSuccess('Ingredient added successfully!')
+      if (response.success) {
+        setNewIngredient({ productId: '', targetMass: 0 })
+        setShowAddIngredient(false)
+        setSuccess('Ingredient added successfully!')
+        await loadIngredients()
+      } else {
+        throw new Error(response.error || 'Failed to add ingredient')
+      }
     } catch (err) {
       console.error('❌ Error adding ingredient:', err)
       setError(err.message)
@@ -199,10 +200,51 @@ const EditFormulation = ({ formulation, products, onSave, onCancel }) => {
     }
   }
 
-  const handleRemoveIngredient = (ingredientId) => {
-    if (window.confirm('Are you sure you want to remove this ingredient?')) {
-      setIngredients(ingredients.filter(ing => ing.id !== ingredientId))
-      setSuccess('Ingredient removed successfully!')
+  const handleRemoveIngredient = async (ingredientId) => {
+    if (!window.confirm('Are you sure you want to remove this ingredient?')) return
+
+    try {
+      setLoading(true)
+      setError(null)
+      const response = await apiService.deleteFormulationIngredient(ingredientId)
+      if (response.success) {
+        setSuccess('Ingredient removed successfully!')
+        await loadIngredients()
+      } else {
+        throw new Error(response.error || 'Failed to remove ingredient')
+      }
+    } catch (err) {
+      console.error('❌ Error removing ingredient:', err)
+      setError(err.message)
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  const handleEditIngredientClick = (ingredient) => {
+    setEditingIngredient(ingredient)
+    setEditIngredientData({ targetMass: ingredient.target_mass || 0 })
+  }
+
+  const handleEditIngredientSave = async () => {
+    if (!editingIngredient || editIngredientData.targetMass <= 0) return
+    try {
+      setLoading(true)
+      setError(null)
+      const response = await apiService.updateFormulationIngredient(editingIngredient.id, {
+        targetMass: editIngredientData.targetMass
+      })
+      if (response.success) {
+        setEditingIngredient(null)
+        setSuccess('Ingredient updated successfully!')
+        await loadIngredients()
+      } else {
+        throw new Error(response.error || 'Failed to update ingredient')
+      }
+    } catch (err) {
+      setError(err.message)
+    } finally {
+      setLoading(false)
     }
   }
 
@@ -444,10 +486,18 @@ const EditFormulation = ({ formulation, products, onSave, onCancel }) => {
                       <td className="ingredient-actions">
                         <button 
                           className="action-btn menu"
-                          onClick={() => {/* TODO: Add edit ingredient functionality */}}
+                          onClick={() => handleEditIngredientClick(ingredient)}
                           title="Edit ingredient"
                         >
-                          <MoreVertical size={14} />
+                          <Edit size={14} />
+                        </button>
+                        <button 
+                          className="action-btn menu"
+                          onClick={() => handleRemoveIngredient(ingredient.id)}
+                          title="Remove ingredient"
+                          style={{ marginLeft: '4px' }}
+                        >
+                          <Trash2 size={14} />
                         </button>
                       </td>
                     </tr>
@@ -506,6 +556,32 @@ const EditFormulation = ({ formulation, products, onSave, onCancel }) => {
                     disabled={!newIngredient.productId || newIngredient.targetMass <= 0}
                   >
                     Add Ingredient
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {editingIngredient && (
+            <div className="modal-overlay">
+              <div className="modal">
+                <div className="modal-title">Edit Ingredient — {editingIngredient.ingredient_name}</div>
+                <div className="modal-content">
+                  <div className="form-group">
+                    <label className="form-label">Target Mass (g)</label>
+                    <input
+                      type="number"
+                      step="0.1"
+                      className="form-input"
+                      value={editIngredientData.targetMass}
+                      onChange={(e) => setEditIngredientData({ targetMass: parseFloat(e.target.value) || 0 })}
+                    />
+                  </div>
+                </div>
+                <div className="modal-actions">
+                  <button className="btn btn-secondary" onClick={() => setEditingIngredient(null)}>Cancel</button>
+                  <button className="btn btn-primary" onClick={handleEditIngredientSave} disabled={editIngredientData.targetMass <= 0}>
+                    Save
                   </button>
                 </div>
               </div>

@@ -45,6 +45,13 @@ const DatabaseImport = () => {
   const handlePreview = async () => {
     if (!file) return;
 
+    if (!fullRefresh) {
+      const proceed = window.confirm(
+        'Full Refresh tidak aktif. Bahan yang dihapus dari CSV tidak akan di-nonaktifkan — MO dan report bisa menampilkan BOM lama dan baru sekaligus.\n\nLanjutkan preview?'
+      );
+      if (!proceed) return;
+    }
+
     setIsPreviewLoading(true);
 
     try {
@@ -119,6 +126,7 @@ const DatabaseImport = () => {
         window.dispatchEvent(new CustomEvent('database_updated'));
         
         alert.success('Database imported successfully!', 'Import Berhasil');
+        localStorage.setItem('master_data_imported', 'true');
       } else {
         const error = await response.json();
         alert.error(`Import failed: ${error.message}`, 'Import Gagal');
@@ -205,12 +213,12 @@ const DatabaseImport = () => {
                   onChange={(e) => setFullRefresh(e.target.checked)}
                   disabled={isUploading || isPreviewLoading}
                 />
-                <span>Full Refresh (Wipe existing data and import fresh)</span>
+                <span>Full Refresh — sinkronkan BOM ke CSV (disarankan)</span>
               </label>
               <p className="toggle-hint">
                 {fullRefresh 
-                  ? '⚠️ All master products, formulations, and ingredients will be DELETED and replaced with new data'
-                  : '⚠️ New data will be added/updated without deleting existing records'}
+                  ? 'Mode aktif: BOM di CSV akan di-upsert. Baris bahan yang tidak ada di CSV akan di-nonaktifkan (soft delete). Jika belum ada history produksi, master data di-reset; jika sudah ada history, data penimbangan lama tetap aman.'
+                  : '⚠️ Tanpa Full Refresh: bahan lama TIDAK di-nonaktifkan — risiko BOM ganda di MO dan laporan history.'}
               </p>
             </div>
 
@@ -323,6 +331,26 @@ const DatabaseImport = () => {
                     <span className="summary-label">New Ingredients:</span>
                     <span className="summary-value text-green-600">{previewData.new_ingredients}</span>
                   </div>
+                  {previewData.full_refresh && (
+                    <>
+                      <div className="summary-item">
+                        <span className="summary-label">Import Mode:</span>
+                        <span className="summary-value">{previewData.import_mode === 'hard_reset' ? 'Hard reset (fresh install)' : 'Soft sync (preserve history)'}</span>
+                      </div>
+                      {previewData.ingredients_to_deactivate > 0 && (
+                        <div className="summary-item">
+                          <span className="summary-label">BOM to Deactivate:</span>
+                          <span className="summary-value text-red-600">{previewData.ingredients_to_deactivate}</span>
+                        </div>
+                      )}
+                      {previewData.formulations_to_deactivate > 0 && (
+                        <div className="summary-item">
+                          <span className="summary-label">Formulations to Deactivate:</span>
+                          <span className="summary-value text-red-600">{previewData.formulations_to_deactivate}</span>
+                        </div>
+                      )}
+                    </>
+                  )}
                 </div>
               </div>
 
@@ -467,7 +495,7 @@ const DatabaseImport = () => {
         </div>
       )}
 
-      <style jsx>{`
+      <style>{`
         .database-import-page {
           padding: 20px;
           max-width: 1200px;

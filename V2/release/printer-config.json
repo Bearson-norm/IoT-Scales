@@ -9,19 +9,19 @@
   "autoDetect": true,
   "fallbackPrinters": [
     {
-      "name": "Xprinter XP-420B (Copy 1)",
-      "port": "USB007",
-      "driver": "Xprinter XP-420B"
-    },
-    {
-      "name": "Xprinter XP-420B",
-      "port": "USB006",
-      "driver": "Xprinter XP-420B"
-    },
-    {
       "name": "OneNote (Desktop)",
       "port": "nul:",
       "driver": "Send to Microsoft OneNote 16 Driver"
+    },
+    {
+      "name": "Xprinter XP-420B",
+      "port": "USB001",
+      "driver": "Xprinter XP-420B"
+    },
+    {
+      "name": "RustDesk Printer",
+      "port": "RustDesk Printer",
+      "driver": "RustDesk v4 Printer Driver"
     },
     {
       "name": "Microsoft Print to PDF",
@@ -29,8 +29,18 @@
       "driver": "Microsoft Print To PDF"
     },
     {
-      "name": "EPSON L3210 Series",
-      "port": "USB001",
+      "name": "EPSON L4360 Series (Copy 1)",
+      "port": "USB015",
+      "driver": "Microsoft IPP Class Driver"
+    },
+    {
+      "name": "EPSON L4360 Series",
+      "port": "WSD-a6f07e36-acb8-4037-93bd-ea6abecae3ab",
+      "driver": "Microsoft IPP Class Driver"
+    },
+    {
+      "name": "EPSON L3210 Series (Copy 1)",
+      "port": "USB014",
       "driver": "EPSON L3210 Series"
     },
     {
@@ -39,6 +49,6 @@
       "driver": "AnyDesk v4 Printer Driver"
     }
   ],
-  "detectedPort": "USB006",
+  "detectedPort": "USB001",
   "detectedName": "Xprinter XP-420B"
 }

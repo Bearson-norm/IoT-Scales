@@ -2,6 +2,7 @@ import React, { useRef, useEffect, useMemo, useState } from 'react'
 import { Scale, Save, Play, AlertCircle, Check } from 'lucide-react'
 import { useAlert } from '../utils/alertModal'
 import PrintConfirmationModal from './PrintConfirmationModal'
+import { getToleranceRangeFromIngredient } from '../utils/weighingTolerance'
 
 const RightPanel = ({ workOrder, selectedIngredient, currentPage, currentWeight, scaleConnected, onSaveProgress, onCompleteWeighing, isWeighingActive, onPrintReceipt, onStartWeighing, zeroCheckWeight = 0, scaleDisplayWeight = 0, showProductVerification = false }) => {
   const { alert } = useAlert()
@@ -66,17 +67,33 @@ const RightPanel = ({ workOrder, selectedIngredient, currentPage, currentWeight,
   
   // Calculate values needed for progressBarMax (with safe defaults)
   const remaining = workOrder && selectedIngredient ? Math.max(0, targetWeight - savedWeight) : 0
-  // Calculate target-weight display value as stream: targetWeight - currentWeight - savedWeight
+  // Beside current-weight: plan remaining only (target − saved), no live session deduction
   const targetWeightDisplay = useMemo(() => {
     if (!workOrder || !selectedIngredient) return 0
-    const currentWeightValue = isWeighingActive ? currentReading : 0
-    return Math.max(0, targetWeight - currentWeightValue - savedWeight)
+    return Math.max(0, targetWeight - savedWeight)
+  }, [workOrder, selectedIngredient, targetWeight, savedWeight])
+  // Param row "Remaining": stream (target − session − saved); negative = overweight vs plan (e.g. 51 g on 50 g target → -1)
+  const remainingLiveDisplay = useMemo(() => {
+    if (!workOrder || !selectedIngredient) return 0
+    const session = isWeighingActive ? currentReading : 0
+    return targetWeight - session - savedWeight
   }, [workOrder, selectedIngredient, targetWeight, currentReading, savedWeight, isWeighingActive])
-  const tolerance = 3
-  const minWeight = workOrder && selectedIngredient ? Math.max(0, targetWeight - tolerance) : 0
-  const maxWeight = workOrder && selectedIngredient ? targetWeight + tolerance : 0
-  const remainingMin = workOrder && selectedIngredient ? Math.max(0, minWeight - savedWeight) : 0
-  const remainingMax = workOrder && selectedIngredient ? Math.max(remaining, maxWeight - savedWeight) : 0
+  const { toleranceMin, toleranceMax, hasValidTolerance } = useMemo(
+    () => getToleranceRangeFromIngredient(selectedIngredient),
+    [selectedIngredient]
+  )
+  const minWeight =
+    workOrder && selectedIngredient && hasValidTolerance ? toleranceMin : 0
+  const maxWeight =
+    workOrder && selectedIngredient && hasValidTolerance ? toleranceMax : 0
+  const remainingMin =
+    workOrder && selectedIngredient && hasValidTolerance
+      ? Math.max(0, minWeight - savedWeight)
+      : 0
+  const remainingMax =
+    workOrder && selectedIngredient && hasValidTolerance
+      ? Math.max(remaining, maxWeight - savedWeight)
+      : remaining
   const remainingToleranceRange = remainingMax - remainingMin
   
   // CRITICAL: Calculate progressBarMax before any early returns
@@ -224,6 +241,10 @@ const RightPanel = ({ workOrder, selectedIngredient, currentPage, currentWeight,
   }
   const totalAccumulated = savedWeight + currentReading; // Display total = saved + current reading
   const current = isWeighingActive ? totalAccumulated : savedWeight; // Only show accumulated when weighing, otherwise show saved weight only
+  // Progress bar fill/marker: same value as .current-weight (session reading when weighing, else scale display)
+  const currentWeightForProgress = isWeighingActive
+    ? currentReading
+    : Math.abs(scaleDisplayWeight || 0)
   
   // REMOVED: Zero check debug logging - user requested to remove zero check
   
@@ -238,14 +259,13 @@ const RightPanel = ({ workOrder, selectedIngredient, currentPage, currentWeight,
   
   // Debug: Log zero check status (remove useEffect to avoid React error)
   // Values are computed on each render, no need for useEffect
-  const withinTolerance = current >= minWeight && current <= maxWeight;
-  const over = current > maxWeight;
-  const under = current < minWeight;
+  const withinTolerance =
+    hasValidTolerance && current >= minWeight && current <= maxWeight
+  const over = hasValidTolerance && current > maxWeight
+  const under = hasValidTolerance && current < minWeight
   
-  // Progress bar: Show current reading against remaining weight (as per user request)
-  // Progress bar max = remaining weight (how much more to add)
-  // Progress fill = currentReading / remaining (how much of remaining has been added)
-  const toleranceRange = maxWeight - minWeight; // e.g., 6g (from -3 to +3)
+  // Progress bar: fill driven by current-weight display only (currentWeightForProgress vs progressBarMax)
+  const toleranceRange = hasValidTolerance ? maxWeight - minWeight : 0
   
   // Calculate tolerance markers relative to remaining weight
   // Min/Max remaining = how much more to add to reach tolerance range
@@ -253,13 +273,12 @@ const RightPanel = ({ workOrder, selectedIngredient, currentPage, currentWeight,
   const remainingTarget = remaining; // Target remaining to add
   
   // Calculate percentage positions relative to progressBarMax
-  // Progress fill: currentReading / remaining (how much of remaining has been added)
   // CRITICAL: Round to 2 decimal places to prevent micro-jitter from floating point precision
-  const currentPercent = remaining > 0 && progressBarMax > 0 
-    ? Math.round(Math.min(100, Math.max(0, (currentReading / progressBarMax) * 100)) * 100) / 100
+  const currentPercent = progressBarMax > 0 
+    ? Math.round(Math.min(100, Math.max(0, (currentWeightForProgress / progressBarMax) * 100)) * 100) / 100
     : 0;
   
-  // Tolerance markers: positions where currentReading should be (relative to remaining)
+  // Tolerance markers: positions relative to remaining (session scale space when weighing)
   // CRITICAL: Round to 2 decimal places for stability
   const remainingTargetPercent = remaining > 0 && progressBarMax > 0 
     ? Math.round((remainingTarget / progressBarMax) * 100 * 100) / 100
@@ -284,11 +303,15 @@ const RightPanel = ({ workOrder, selectedIngredient, currentPage, currentWeight,
   const minToTargetGap = remainingTargetPercent - remainingMinPercent;
   const targetToMaxGap = remainingMaxPercent - remainingTargetPercent;
   
-  // Check if current reading is within tolerance range (relative to remaining)
-  // Current reading should be between remainingMin and remainingMax
-  const currentReadingWithinTolerance = currentReading >= remainingMin && currentReading <= remainingMax;
-  const currentReadingOver = currentReading > remainingMax;
-  const currentReadingUnder = currentReading < remainingMin;
+  const progressWithinTolerance =
+    hasValidTolerance &&
+    isWeighingActive &&
+    currentWeightForProgress >= remainingMin &&
+    currentWeightForProgress <= remainingMax
+  const progressOver =
+    hasValidTolerance && isWeighingActive && currentWeightForProgress > remainingMax
+  const progressUnder =
+    hasValidTolerance && isWeighingActive && currentWeightForProgress < remainingMin
 
   // Safe display value helper
   const safeScaleDisplay = (typeof scaleDisplayWeight === 'number' && !isNaN(scaleDisplayWeight))
@@ -348,12 +371,14 @@ const RightPanel = ({ workOrder, selectedIngredient, currentPage, currentWeight,
           }}>
             <div style={{
               width: `${currentPercent}%`, height: '100%',
-              backgroundColor: currentReadingWithinTolerance ? '#22c55e' : (currentReadingUnder ? '#eab308' : '#ef4444'),
+              backgroundColor: !isWeighingActive
+                ? '#64748b'
+                : (progressWithinTolerance ? '#22c55e' : (progressUnder ? '#eab308' : '#ef4444')),
               transition: 'width 0.3s ease, background-color 0.3s ease',
               borderRadius: '6px', position: 'relative', zIndex: 1
             }} />
             
-            {remainingMinPercent > 0 && (
+            {hasValidTolerance && remainingMinPercent > 0 && (
               <div style={{
                 position: 'absolute', left: `${remainingMinPercent}%`, top: '-2px',
                 width: '2px', height: '18px', backgroundColor: '#3b82f6', zIndex: 2,
@@ -369,7 +394,7 @@ const RightPanel = ({ workOrder, selectedIngredient, currentPage, currentWeight,
               }} title={`Target: ${remainingTarget.toFixed(1)}g`} />
             )}
             
-            {remainingMaxPercent > 0 && (
+            {hasValidTolerance && remainingMaxPercent > 0 && (
               <div style={{
                 position: 'absolute', left: `${remainingMaxPercent}%`, top: '-2px',
                 width: '2px', height: '18px', backgroundColor: '#3b82f6', zIndex: 2,
@@ -377,26 +402,26 @@ const RightPanel = ({ workOrder, selectedIngredient, currentPage, currentWeight,
               }} title={`Max: ${remainingMax.toFixed(1)}g`} />
             )}
             
-            {currentReading > 0 && (
+            {currentWeightForProgress > 0 && (
               <div style={{
                 position: 'absolute', left: `${currentPercent}%`, top: '-4px',
                 width: '3px', height: '22px', backgroundColor: '#1f2937', zIndex: 4,
                 boxShadow: '0 0 4px rgba(0,0,0,0.5)', transform: 'translateX(-50%)',
                 borderRadius: '1px'
-              }} title={`Reading: ${currentReading.toFixed(1)}g / ${remaining.toFixed(1)}g`} />
+              }} title={`Reading: ${currentWeightForProgress.toFixed(1)}g / ${remaining.toFixed(1)}g`} />
             )}
           </div>
           
           {/* Tolerance labels */}
           <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '10px', color: '#6b7280', fontWeight: 500 }}>
             <span style={{ color: '#3b82f6' }}>
-              Min: {remainingMin.toFixed(1)}g
+              Min: {hasValidTolerance ? `${remainingMin.toFixed(1)}g` : '—'}
             </span>
             <span style={{ fontWeight: 700, color: '#6366f1', fontSize: '11px' }}>
               Target: {remaining.toFixed(1)}g
             </span>
             <span style={{ color: '#3b82f6' }}>
-              Max: {remainingMax.toFixed(1)}g
+              Max: {hasValidTolerance ? `${remainingMax.toFixed(1)}g` : '—'}
             </span>
           </div>
           
@@ -424,7 +449,9 @@ const RightPanel = ({ workOrder, selectedIngredient, currentPage, currentWeight,
           <div className="param-table">
             <div className="param-row">
               <span className="parameter-label">MAX</span>
-              <span className="parameter-value">{maxWeight.toFixed(1)} g</span>
+              <span className="parameter-value">
+                {hasValidTolerance ? `${maxWeight.toFixed(1)} g` : '—'}
+              </span>
             </div>
             <div className="param-row">
               <span className="parameter-label">Plan Qty</span>
@@ -432,11 +459,17 @@ const RightPanel = ({ workOrder, selectedIngredient, currentPage, currentWeight,
             </div>
             <div className="param-row">
               <span className="parameter-label">MIN</span>
-              <span className="parameter-value">{minWeight.toFixed(1)} g</span>
+              <span className="parameter-value">
+                {hasValidTolerance ? `${minWeight.toFixed(1)} g` : '—'}
+              </span>
             </div>
             <div className="param-row" style={{ borderBottom: 'none' }}>
               <span className="parameter-label">Remaining</span>
-              <span className="parameter-value remaining">{remaining.toFixed(1)} g</span>
+              <span
+                className={`parameter-value remaining${remainingLiveDisplay < 0 ? ' remaining-negative' : ''}`}
+              >
+                {remainingLiveDisplay.toFixed(1)} g
+              </span>
             </div>
           </div>
 

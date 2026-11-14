@@ -49,6 +49,7 @@ CREATE TABLE master_formulation (
     sku VARCHAR(50) NOT NULL, -- Foreign key reference
     total_mass DECIMAL(12,3) NOT NULL DEFAULT 0,
     total_ingredients INTEGER NOT NULL DEFAULT 0,
+    scaling_mode VARCHAR(20) NOT NULL DEFAULT 'per_1000g' CHECK (scaling_mode IN ('per_1000g', 'per_unit')),
     status VARCHAR(20) NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'inactive')),
     created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
@@ -90,6 +91,7 @@ CREATE TABLE work_orders (
     work_order_number VARCHAR(50) UNIQUE NOT NULL,
     formulation_id UUID NOT NULL REFERENCES master_formulation(id),
     planned_quantity DECIMAL(12,3) NOT NULL,
+    planned_units DECIMAL(12,3),
     actual_quantity DECIMAL(12,3) DEFAULT 0,
     status VARCHAR(20) NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'in_progress', 'completed', 'cancelled')),
     created_by UUID NOT NULL REFERENCES master_user(id),
